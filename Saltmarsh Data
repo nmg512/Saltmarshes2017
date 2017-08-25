@@ -1,0 +1,1514 @@
+##################
+#
+# OBJECTIVES:
+# - Identify impact of wave fetch (wave exposure) on saltmarsh zonation type 
+#(probability of finding particular types)
+# - Identify to what extent wave exposure limits marsh development. Is the relationship 
+#smooth or does a threshold exist?
+# - Width of marsh => variation in level of protection
+# - How close saltmarsh to areas where it could have a protecting effect?
+
+#Zonation/fetch analysis
+#Calculate wave fetch and distance over saltmarsh/mudflat zones
+#
+# PART 1 - Sort out data 
+# i) extract fetch relevant to each record
+# iv) calculate marsh width at each record location (width of the marsh is likely to be a strong
+#determinant of the coastal protection provided (see e.g. King & Lester (1995), MPB))
+# v) get tidal range for each record
+
+##################
+# Load relevant packages for dealing with spatial data 
+library(sp)
+library(raster)
+library(nabor)
+library(maptools)
+library(rgeos)
+library(rgdal)
+library(gstat)
+library(geosphere)
+
+# British National Grid definition as used if/where a coordinate reference system is required
+bng = '+proj=tmerc +lat_0=49 +lon_0=-2 +k=0.9996012717 +x_0=400000 +y_0=-100000 +ellps=airy +datum=OSGB36 +units=m +no_defs'
+# Latitude/longitude definition just in case
+latlong = '+init=epsg:4326'
+
+#  ------------------------ PART 1 load and sort data ------------------------ 
+# Working directory: "/Users/reidgilbertson/Desktop/Research/Data and analysis"
+# This is all saved in the coastalData RData file
+
+####################################################################
+#Load data
+####################################################################
+load("/Users/reidgilbertson/Desktop/Research/Data and analysis/coastalData.RData")
+
+### European extent
+#UK and Europe - value of 1
+UK_euraster <- raster("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/rasters_eu200/uk_europe_raster200.tif")
+#UK only - value of 2
+UKrasterbig <- raster("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/rasters_eu200/UKraster_euext200.tif")
+#NW Europe only - value of 3
+euraster <- raster("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/rasters_eu200/europe_nouk_raster200.tif")
+
+### UK extent
+#UK only - value of 2
+UK50raster <- raster("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/rasters_uk200/UKraster50.tif")
+#Saltmarshes - value of 4
+SMraster <- raster("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/rasters_uk200/marshraster200.tif")
+SMraster50 <- raster("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/rasters_uk200/marshraster50_2.tif")
+#Mudflats - value of 5
+MFraster50 <- raster("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/rasters_uk200/mudrasterfull50.tif")
+
+### Zonation rasters
+pioneer <- raster("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/rasters_uk200/pioneer50raster.tif")
+reedbeds <- raster("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/rasters_uk200/reedbeds50raster.tif")
+spartina <- raster("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/rasters_uk200/spartina50raster.tif")
+midlow <- raster("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/rasters_uk200/midlow50raster.tif")
+uppermarsh <- raster("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/rasters_uk200/upper50raster.tif")
+notsm <- raster("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/rasters_uk200/notsm50raster.tif")
+
+### UK building rasters
+buildings <- raster("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/rasters_uk200/UKbuildings50.tif")
+
+### UK agricultural rasters
+agland <- raster("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/rasters_land50/agland.tif")
+grade1 <- raster("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/rasters_land50/grade1.tif")
+grade2 <- raster("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/rasters_land50/grade2.tif")
+grade3 <- raster("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/rasters_land50/grade3.tif")
+grade4 <- raster("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/rasters_land50/grade4.tif")
+grade5 <- raster("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/rasters_land50/grade5.tif")
+
+####################################################################
+#Manipulate data
+####################################################################
+## Transform rasters to identify NA cell values as 0
+#EU - 0s are sea, 1s are land
+UK_eurastercat <- UK_euraster
+UK_eurastercat[is.na(UK_eurastercat[])] <- 0
+UK_eur_bound <- boundaries(UK_euraster, type = "inner", classes = "FALSE", directions = 8,
+                           asNA = "FALSE")
+
+#Get coordinates
+UK_eu_coords <- coordinates(UK_euraster)
+UK_eu_boundcoords <- coordinates(UK_eur_bound)
+
+#UK only - 0s are everything but the UK (i.e. sea and Europe), 2s are UK land
+UKbigcat <- UKrasterbig
+UKbigcat[is.na(UKbigcat[])] <- 0
+UKbig_bound <- boundaries(UKrasterbig, type = 'inner', classes = 'FALSE', directions = 8, 
+                          asNA = 'FALSE')
+#Get coordinates
+UKbig_coords <- coordinates(UKrasterbig)
+UKbig_boundcoords <- coordinates(UKbig_bound)
+
+#NW Europe only - 0s are everything but Europe (i.e. sea and UK), 3s are Europe land
+eucat <- euraster
+eucat[is.na(eucat[])] <- 0
+eu_bound <- boundaries(euraster, type = 'inner', classes = 'FALSE', directions = 8, 
+                       asNA = 'FALSE')
+#Get coordinates
+eu_coords <- coordinates(euraster)
+eu_boundcoords <- coordinates(eu_bound)
+
+
+#UK only, UK extent - 0s are sea, 2s are land
+UKcat <- UKrastersmall
+UKcat[is.na(UKcat[])] <- 0
+UK_bound <- boundaries(UKrastersmall, type = 'inner', classes = 'FALSE', directions = 8,
+                       asNA = 'FALSE')
+UK50_bound <- boundaries(UK50raster, type = 'inner', classes = 'FALSE', directions = 8,
+                         asNA = 'FALSE')
+#Get coordinates
+UKsmall_coords <- coordinates(UKrastersmall)
+UKsmall_boundcoords <- coordinates(UK_bound)
+UK50_coords <- coordinates(UK50raster)
+UK50_boundcoords <- coordinates(UK50_bound)
+
+#UK only, UK extent, 50m resolution - 0s are sea, 2s are land
+UK50cat <- UK50raster
+UK50cat[is.na(UK50cat[])] <- 0
+
+#Saltmarshes - 0s are everything but saltmarshes (i.e. sea, UK, mudflats), 4s are saltmarshes
+SMcat <- SMraster
+SMcat[is.na(SMcat[])] <- 0
+SM50cat <- SMraster50
+SM50cat[is.na(SM50cat[])] <- 0
+#Get coordinates
+SM_coords <- coordinates(SMraster)
+SM50_coords <- coordinates(SMraster50)
+
+#Mudflats - 0s are everything but mudflats (i.e. sea, UK, saltmarshes), 5s are mudflats
+MF50cat <- MFraster50
+MF50cat[is.na(MF50cat[])] <- 0
+#Get coordinates
+MF50_coords <- coordinates(MFraster50)
+
+#Saltmarsh zonations upper marsh 5, not sm 6
+#Pioneer - 1
+pioneercat <- pioneer
+pioneercat[is.na(pioneercat[])] <- 0
+#Reedbeds - 2
+reedbedscat <- reedbeds
+reedbedscat[is.na(reedbedscat[])] <- 0
+#Spartina - 3
+spartinacat <- spartina
+spartinacat[is.na(spartinacat[])] <- 0
+#Mid-low - 4
+midlowcat <- midlow
+midlowcat[is.na(midlowcat[])] <- 0
+#Upper marsh - 5
+uppermarshcat <- uppermarsh
+uppermarshcat[is.na(uppermarshcat[])] <- 0
+#Not saltmarsh - 6
+notsmcat <- notsm
+notsmcat[is.na(notsmcat[])] <- 0
+#Get coordinates
+pioneershape <- Which(pioneer == 1, cells = TRUE)
+pioneer_coords <- matrix(ncol = 2, nrow = length(pioneershape))
+for (i in 1:length(pioneershape)) {
+  pioneer_coords[i,] <- UK50_coords[pioneershape[i],]
+}
+
+reedshape <- Which(reedbeds == 2, cells = TRUE)
+reed_coords <- matrix(ncol = 2, nrow = length(reedshape))
+for (i in 1:length(reedshape)) {
+  reed_coords[i,] <- UK50_coords[reedshape[i],]
+}
+
+spartinashape <- Which(spartina == 3, cells = TRUE)
+spartina_coords <- matrix(ncol = 2, nrow = length(spartinashape))
+for (i in 1:length(spartinashape)) {
+  spartina_coords[i,] <- UK50_coords[spartinashape[i],]
+}
+
+midlowshape <- Which(midlow == 4, cells = TRUE)
+midlow_coords <- matrix(ncol = 2, nrow = length(midlowshape))
+for (i in 1:length(midlowshape)) {
+  midlow_coords[i,] <- UK50_coords[midlowshape[i],]
+}
+
+uppershape <- Which(uppermarsh == 5, cells = TRUE)
+upper_coords <- matrix(ncol = 2, nrow = length(uppershape))
+for (i in 1:length(uppershape)) {
+  upper_coords[i,] <- UK50_coords[uppershape[i],]
+}
+
+notshape <- Which(notsm == 6, cells = TRUE)
+notsm_coords <- matrix(ncol = 2, nrow = length(notshape))
+for (i in 1:length(notshape)) {
+  notsm_coords[i,] <- UK50_coords[notshape[i],]
+}
+
+#Buildings - 8's are buildings
+buildingscat <- buildings
+buildingscat[is.na(buildingscat[])] <- 0
+#Get coordinates
+buildings_coords <- coordinates(buildings)
+
+#Agricultural land - get coordinates
+#agland_coords <- coordinates(agland)
+grade1_coords <- coordinates(grade1)
+grade2_coords <- coordinates(grade2)
+grade3_coords <- coordinates(grade3)
+grade4_coords <- coordinates(grade4)
+grade5_coords <- coordinates(grade5)
+
+#############################################################################################
+#############################################################################################
+
+# ----------------------------------DISTANCE CALCULATIONS---------------------------------- #
+# ----------------------------------------- DONE ------------------------------------------ #
+
+####################################################################
+#Pull out data - get boundaries and coordinates
+####################################################################
+
+#Find which boundary cells are true boundary cells (i.e. are land cells)
+UKbig_boundary <- Which(UKbig_bound == 1, cells = TRUE)
+#Obtain row and column numbers instead of cells for each true boundary cell
+UK_boundarycells <- rowColFromCell(UK_euraster, UKbig_boundary)
+
+#Obtain coordinates for true boundary cells
+UKbigstart_coords <- matrix(ncol= 2, nrow = length(UKbig_boundary))
+for (i in 1:length(UKbig_boundary)) {
+  UKbigstart_coords[i,] <- UKbig_boundcoords[UKbig_boundary[i],]
+}
+
+#Find true saltmarsh points and get coordinates for the saltmarsh
+SM_valpts <- Which(SMraster == 4, cells = TRUE)
+SMval_coords <- matrix(ncol = 2, nrow = length(SM_valpts))
+for (i in 1:length(SM_valpts)) {
+  SMval_coords[i,] <- SM_coords[SM_valpts[i],]
+}
+
+#Find closest salt marsh point to the boundary points
+UKsm_knn <- knn(data = SMval_coords, query = UKbigstart_coords, k = 1)
+
+#Classify UK boundary points that are farther than 5km from a saltmarsh point as NAs
+UKsm_bound <- matrix(nrow = length(UKsm_knn$nn.dists), ncol = 1)
+for (i in 1:length(UKsm_knn$nn.dists)) {
+  if (UKsm_knn$nn.dists[i] > 5000) {
+    UKsm_bound[i] <- NA
+  } else {
+    UKsm_bound[i] <- UKbig_boundary[i]
+  }
+}
+#Remove NAs from UK boundary points
+UKsm_bound <- na.omit(UKsm_bound)
+# --RUN DISTANCE CALCULATIONS FOR THESE POINTS-- #
+UKsm_rowcol <- rowColFromCell(UKbig_bound, UKsm_bound)
+
+UKsm_coords <- matrix(ncol = 2, nrow = length(UKsm_bound))
+for (i in 1:length(UKsm_bound)) {
+  UKsm_coords[i,] <- UKbig_boundcoords[UKsm_bound[i],]
+}
+
+####################################################################
+#Breakdown of marsh into individual pieces
+####################################################################
+UKsm_coords <- read.csv("/Users/reidgilbertson/Desktop/UKsm_coords.csv")
+UKsm_coords <- as.matrix(UKsm_coords[,2:3])
+
+#Northeast marsh calculations
+ne <- UKsm_coords[UKsm_coords[,1] > 387500 & UKsm_coords[,1] < 472500
+                  & UKsm_coords[,2] > 511600 & UKsm_coords[,2] < 659600]
+necoord <- matrix(ne, nrow = length(ne)/2, ncol = 2)
+necell <- cellFromXY(UKbig_bound, necoord)
+ne_rowcol <- rowColFromCell(UKbig_bound, necell)
+
+#Northwest marsh calculations
+nw <- UKsm_coords[UKsm_coords[,1] > 185200 & UKsm_coords[,1] < 377900
+                  & UKsm_coords[,2] > 269800 & UKsm_coords[,2] < 578400]
+nwcoord <- matrix(nw, nrow = length(nw)/2, ncol = 2)
+nwcell <- cellFromXY(UKbig_bound, nwcoord)
+nw_rowcol <- rowColFromCell(UKbig_bound, nwcell)
+
+#Mideast marsh calculations
+mide <- UKsm_coords[UKsm_coords[,1] > 441600 & UKsm_coords[,1] < 631200
+                    & UKsm_coords[,2] > 269800 & UKsm_coords[,2] < 461400]
+midecoord <- matrix(mide, nrow = length(mide)/2, ncol = 2)
+midecell <- cellFromXY(UKbig_bound, midecoord)
+mide_rowcol <- rowColFromCell(UKbig_bound, midecell)
+
+#Southwest marsh calculations
+sw <- UKsm_coords[UKsm_coords[,1] > 58500 & UKsm_coords[,1] < 490960
+                  & UKsm_coords[,2] > -15800 & UKsm_coords[,2] < 284500]
+swcoord <- matrix(sw, nrow = length(sw)/2, ncol = 2)
+swcell <- cellFromXY(UKbig_bound, swcoord)
+sw_rowcol <- rowColFromCell(UKbig_bound, swcell)
+
+#Southeast marsh calculations
+se <- UKsm_coords[UKsm_coords[,1] > 493500 & UKsm_coords[,1] < 689600
+                  & UKsm_coords[,2] > 87300 & UKsm_coords[,2] < 319900]
+secoord <- matrix(se, nrow = length(se)/2, ncol = 2)
+secell <- cellFromXY(UKbig_bound, secoord)
+se_rowcol <- rowColFromCell(UKbig_bound, secell)
+
+midecell <-as.matrix(midecell)
+necell <- as.matrix(necell)
+nwcell <- as.matrix(nwcell)
+secell <- as.matrix(secell)
+swcell <- as.matrix(swcell)
+full_landcoords <- rbind(midecoord, necoord, nwcoord, secoord, swcoord)
+full_cell <- rbind(midecell, necell, nwcell, secell, swcell)
+full_rowcol <- rbind(mide_rowcol, ne_rowcol, nw_rowcol, se_rowcol, sw_rowcol)
+
+write.csv(full_landcoords, file = "full_landcoords.csv")
+####################################################################
+#Distance to nearest land point calculations
+####################################################################
+
+#Calculate distance in 8 directions for the true boundary cells - 
+# 0˚, 45˚, 90˚, 135˚, 180˚, 225˚, 270˚, 315˚
+#What shifts in row and column number should happen for each direction:
+directionsteps <- matrix(c(0,1,-1,1,-1,0,-1,-1,0,-1,1,-1,1,0,1,1), ncol = 2, byrow = TRUE)
+
+#Loop through each boundary point (j loop) and direction (k loop) to find nearest bit of land
+landpt <- matrix(nrow = length(full_cell), ncol = 8)
+for (j in 1:length(full_cell)) {
+  startpt <- full_rowcol[j,]
+  for (k in 1:8) {
+    searchpt <- c(startpt[1] + directionsteps[k,1], startpt[2] + directionsteps[k,2])
+    searchcell <- cellFromRowCol(UKbig_bound, searchpt[1], searchpt[2])
+    for (i in 1:1000) {
+      if (UK_eurastercat[searchcell] == 1) {
+        landpt[j,k] <- searchcell
+        break
+      } else {
+        newsearch <- c(searchpt[1] + i*directionsteps[k,1], startpt[2] + i*directionsteps[k,2])
+        searchcell <- cellFromRowCol(UKbig_bound, newsearch[1], newsearch[2])
+      }
+    }
+  }
+}
+
+write.csv(landpt, file = "full_land.csv")
+
+#Extract x and y coordinates for each nearest land point and store in a matrix
+xland <- matrix(nrow = length(full_cell), ncol = 8)
+yland <- matrix(nrow = length(full_cell), ncol = 8)
+for (i in 1:length(full_cell)) {
+  for (j in 1:8) {
+    xland[i,j] <- UKbig_boundcoords[landpt[i,j], 1]
+    yland[i,j] <- UKbig_boundcoords[landpt[i,j], 2]
+  }
+}
+
+write.csv(xland, file = "land_xcoords.csv")
+write.csv(yland, file = "land_ycoords.csv")
+
+#Calculate average distance around 8 directions between boundary cells (UKbigstart_coords) 
+#and land for each boundary cell. 
+avgdist <- matrix(ncol = 1, nrow = length(full_cell))
+for (i in 1:length(full_cell)) {
+  nearland <- cbind(xland[i,], yland[i,])
+  for (j in 1:8) {
+    if (is.na(nearland[j,1]) == 'TRUE') {
+      nearland[j,1] <- full_landcoords[i,1]
+    }
+    if (is.na(nearland[j,2]) == 'TRUE') {
+      nearland[j,2] <- full_landcoords[i,2]
+    }
+  }
+  distance <- spDistsN1(nearland, full_landcoords[i,], longlat = FALSE)
+  #Make 0 distances = 200 km, as they are points where NAs were (i.e. no land within 200km found)
+  for (k in 1:8) {
+    if (distance[k] == 0) {
+      distance[k] <- 200000
+    }
+  }
+  avgdist[i] <- (mean(distance))/1000     #Find average distance of closest land point in km
+}
+
+write.csv(avgdist, file = "full_avgdist.csv")
+
+
+
+####################################################################
+#Sample plot of what the calculation does
+####################################################################
+essex1 <- matrix(essexcoord[934,], ncol = 2)    # First boundary point for Essex estuary
+essex_x1 <- matrix(xland[934,], ncol = 1)       # x-coordinates for nearest land to first point
+essex_y1 <- matrix(yland[934,], ncol = 1)       # y-coordinates for nearest land to first point
+essex_dist1 <- cbind(essex_x1, essex_y1)      # Coordinates bound together
+essexx <- matrix(essexcoord[199,], ncol = 2)
+essex_xx1 <- matrix(xland[199,], ncol = 1)
+essex_yy1 <- matrix(yland[199,], ncol = 1)
+essex_distx <- cbind(essex_xx1, essex_yy1)
+
+#Plot 1 sample point
+plot(UKbigstart_coords, pch = '.', xlim = c(598000, 610000), ylim = c(190000, 202000),
+     main = 'Nearest land point in 8 directions for sample coastal point',
+     xlab = 'Eastings (British National Grid System x-coordinate)',
+     ylab = 'Northings (British National Grid System y-coordinate)')
+points(essex1, col = 'red', pch = 20)
+points(essex_dist1, col = 'blue', pch = 20)
+legend(x = 605000, y = 192000, legend = c('Coastal boundary points', 'Sample boundary point', 
+                                          'Nearest land point'), col = c('black', 'red', 'blue'),
+       pch = c(46, 20, 20), bty = 'n', pt.cex = 1, cex = 0.8)
+
+
+#############################################################################################
+#############################################################################################
+
+# ----------------------------------SALTMARSH CALCULATIONS--------------------------------- #
+# ------------------------------------------ DONE ----------------------------------------- #
+
+####################################################################
+#Pull out data - get boundaries and coordinates
+####################################################################
+#Find which boundary cells are true boundary cells (i.e. are land cells)
+UKlittle_boundary <- Which(UK50_bound == 1, cells = TRUE)
+
+#Obtain coordinates for true boundary cells
+UKstart_coords1 <- matrix(ncol= 2, nrow = length(UKlittle_boundary))
+for (i in 1:length(UKlittle_boundary)) {
+  UKstart_coords1[i,] <- UK50_boundcoords[UKlittle_boundary[i],]
+}
+
+#Find true 50m saltmarsh points and get coordinates for the saltmarsh
+SM50_valpts <- Which(SMraster50 == 4, cells = TRUE)
+SM50val_coords <- matrix(ncol = 2, nrow = length(SM50_valpts))
+for (i in 1:length(SM50_valpts)) {
+  SM50val_coords[i,] <- SM50_coords[SM50_valpts[i],]
+}
+
+#Find closest 50m saltmarsh point to the boundary points
+UKsm_50knn <- knn(data = SM50val_coords, query = UKstart_coords1, k = 1)
+
+#Classify UK boundary points farther than 5km from 50m SM raster as NAs
+UKsm_50bound <- matrix(nrow = length(UKsm_50knn$nn.dists), ncol = 1)
+for (i in 1:length(UKsm_50knn$nn.dists)) {
+  if (UKsm_50knn$nn.dists[i] > 5000) {
+    UKsm_50bound[i] <- NA
+  } else {
+    UKsm_50bound[i] <- UKlittle_boundary[i]
+  }
+}
+
+#Remove NAs from UK boundary points for 50m SM raster
+UKsm_50bound <- na.omit(UKsm_50bound)
+# --RUN SALTMARSH CALCULATIONS FOR THESE POINTS-- #
+UKsm50_rowcol <- rowColFromCell(UK50_bound, UKsm_50bound)
+
+UKsm50_coords <- matrix(ncol = 2, nrow = length(UKsm_50bound))
+for (i in 1:length(UKsm_50bound)) {
+  UKsm50_coords[i,] <- UK50_coords[UKsm_50bound[i],]
+}
+
+####################################################################
+#Distance to saltmarsh back boundary calculations
+####################################################################
+#Calculate distance in 16 directions for the true UK boundary cells - 
+# 0˚, 22.5˚, 45˚, 67.5˚, 90˚, 112.5˚, 135˚, 157.5˚, 180˚, 202.5˚, 225˚, 247.5˚, 270˚, 292.5˚,
+# 315˚, 337.5˚
+
+#What shifts in row and column number should happen for each direction:
+SMdirectionsteps <- matrix(c(0,1, -1,2, -1,1, -2,1, -1,0, -2,-1, -1,-1, -1,-2, 0,-1, 1,-2,
+                             1,-1, 2,-1, 1,0, 2,1, 1,1, 1,2), ncol = 2, byrow = TRUE)
+
+#Loop through each boundary point (j loop) and direction (k loop) to find saltmarsh points
+marshpt <- matrix(0, nrow = length(UKsm_50bound), ncol = 16)
+backmarsh <- matrix(nrow = length(UKsm_50bound), ncol = 16)
+for (j in 1:length(UKsm_50bound)) {
+  startmarsh <- UKsm50_rowcol[j,]
+  for (k in 1:16) {
+    msearch <- c(startmarsh[1] + SMdirectionsteps[k,1], startmarsh[2] + SMdirectionsteps[k,2])
+    mcell <- cellFromRowCol(SMraster50, msearch[1], msearch[2])
+    for (i in 1:20) {
+      if (i <= 5 && SM50cat[mcell] == 4) {
+        marshpt[j,k] <- marshpt[j,k] + 1
+        backmarsh[j,k] <- mcell
+        nextsearch <- c(msearch[1] + i*SMdirectionsteps[k,1], msearch[2] + i*SMdirectionsteps[k,2])
+        mcell <- cellFromRowCol(UK50raster, nextsearch[1], nextsearch[2])
+      } else if (i > 5 && SM50cat[mcell] == 4) {
+        marshpt[j,k] <- marshpt[j,k] + 1
+        backmarsh[j,k] <- mcell
+        nextsearch <- c(msearch[1] + i*SMdirectionsteps[k,1], msearch[2] + i*SMdirectionsteps[k,2])
+        mcell <- cellFromRowCol(UK50raster, nextsearch[1], nextsearch[2])
+      } else if (i > 5 && SM50cat[mcell] != 4) {
+        break
+      } else {
+        nextsearch <- c(msearch[1] + i*SMdirectionsteps[k,1], msearch[2] + i*SMdirectionsteps[k,2])
+        mcell <- cellFromRowCol(UK50raster, nextsearch[1], nextsearch[2])
+      }
+    }
+  }
+}
+
+#write.csv(marshpt, file = "marshcellsumsfinal.csv")
+#write.csv(backmarsh, file = "marshbackboundfinal.csv")
+
+#Total number of cells w/ saltmarsh per boundary point:
+saltcells <- matrix(nrow = length(UKsm_50bound), ncol = 1)
+for (i in 1:length(UKsm_50bound)) {
+  saltcells[i] <- sum(marshpt[i,])
+}
+#Avg number of cells w/ saltmarsh per boundary point (total is 320 cells searched, 16*20)
+avgsaltcells <- saltcells/320
+
+#write.csv(saltcells, file = "marshcelltotalsfinal.csv")
+#write.csv(avgsaltcells, file = "marshcellavgfinal.csv")
+
+#Extract x and y coordinates for each back marsh point and store in a matrix
+xmarsh <- matrix(nrow = length(UKsm_50bound), ncol = 16)
+ymarsh <- matrix(nrow = length(UKsm_50bound), ncol = 16)
+for (i in 1:length(UKsm_50bound)) {
+  for (j in 1:16) {
+    xmarsh[i,j] <- SM50_coords[backmarsh2[i,j], 1]
+    ymarsh[i,j] <- SM50_coords[backmarsh2[i,j], 2]
+  }
+}
+
+#Test for only 8 directions:
+backmarsh8 <- backmarsh2[,c(1,3,5,7,9,11,13,15)]
+xmarsh8 <- matrix(nrow = length(UKsm_50bound), ncol = 8)
+ymarsh8 <- matrix(nrow = length(UKsm_50bound), ncol = 8)
+for (i in 1:length(UKsm_50bound)) {
+  for (j in 1:8) {
+    xmarsh8[i,j] <- SM50_coords[backmarsh8[i,j], 1]
+    ymarsh8[i,j] <- SM50_coords[backmarsh8[i,j], 2]
+  }
+}
+
+####################################################################
+#Sample plot of what the calculation does      
+#275, 287, 298, 1453, 1503, 1522, 1531, 1532, 1541-1544, 1551-1554
+####################################################################
+sm_1 <- matrix(UKsm50_coords[1522,], ncol = 2) # First UK boundary point for saltmarsh
+sm_x1 <- matrix(xmarsh[1522,], ncol = 1)       # x-coordinates for back of marsh to first point
+sm_y1 <- matrix(ymarsh[1522,], ncol = 1)       # y-coordinates for back of marsh to first point
+sm_dist1 <- cbind(sm_x1, sm_y1)                # Coordinates bound together
+
+plot(UKstart_coords1, pch = 20, 
+     xlim = c(min(sm_dist1[,1], na.rm = TRUE) - 1000, max(sm_dist1[,1], na.rm = TRUE) + 1000), 
+     ylim = c(min(sm_dist1[,2], na.rm = TRUE) - 1000, max(sm_dist1[,2], na.rm = TRUE) + 1000),
+     main = 'Back boundary of marsh in 16 directions for sample coastal point',
+     xlab = 'Eastings (British National Grid System x-coordinate)',
+     ylab = 'Northings (British National Grid System y-coordinate)')
+points(SM50val_coords, col = 'chocolate2', pch = 1)
+points(sm_1, col = 'red', pch = 19)
+points(sm_dist1, col = 'blue', pch = 20)
+legend('topleft', legend = c('Coastal boundary points','Saltmarsh points','Sample boundary point', 
+                             'Back boundary point of saltmarsh'), col = c('black','chocolate2','red','blue'),
+       pch = c(20, 1, 19, 20), bty = 'n', pt.cex = 1, cex = 0.8)
+
+####################################################################
+#Calculate average distance over saltmarsh
+####################################################################
+#Calculate average distance to back marsh point around 16 directions, output is in meters
+marshdist <- matrix(ncol = 1, nrow = length(UKsm_50bound))
+for (i in 1:length(UKsm_50bound)) {
+  nearmarsh <- cbind(xmarsh[i,], ymarsh[i,])
+  for (j in 1:16) {
+    if (is.na(nearmarsh[j,1]) == 'TRUE') {
+      nearmarsh[j,1] <- UKsm50_coords[i,1]
+    }
+    if (is.na(nearmarsh[j,2]) == 'TRUE') {
+      nearmarsh[j,2] <- UKsm50_coords[i,2]
+    }
+  }
+  totaldist <- spDistsN1(nearmarsh, UKsm50_coords[i,], longlat = FALSE)
+  marshdist[i] <- mean(totaldist)
+}
+
+#write.csv(marshdist, file = "marshlengthfinal.csv")
+
+marshdist8 <- matrix(ncol = 1, nrow = length(UKsm_50bound))
+for (i in 1:length(UKsm_50bound)) {
+  nearmarsh8 <- cbind(xmarsh8[i,], ymarsh8[i,])
+  for (j in 1:8) {
+    if (is.na(nearmarsh8[j,1]) == 'TRUE') {
+      nearmarsh8[j,1] <- UKsm50_coords[i,1]
+    }
+    if (is.na(nearmarsh8[j,2]) == 'TRUE') {
+      nearmarsh8[j,2] <- UKsm50_coords[i,2]
+    }
+  }
+  totaldist8 <- spDistsN1(nearmarsh8, UKsm50_coords[i,], longlat = FALSE)
+  marshdist8[i] <- mean(totaldist8)
+}
+
+write.csv(marshdist8, file = "marshlengthfinal8.csv")
+
+#############################################################################################
+#############################################################################################
+
+# ----------------------------------ZONATION CALCULATIONS---------------------------------- #
+# ----------------------------------------- DONE ------------------------------------------ #
+
+####################################################################
+#Pull out data - get boundaries and coordinates
+####################################################################
+#Use boundary cells and coordinates from saltmarsh calculations - 
+# UKlittle_boundary and UKstart_coords1
+
+#Find true zonation and get coordinates, using upper marsh as it covers all regions
+#Find closest upper marsh zonation points to the boundary points
+zone_knn <- knn(data = upper_coords, query = UKstart_coords1, k = 1)
+
+#Classify UK boundary points farther than 1 km from zonation data as NAs
+zone_bound <- matrix(nrow = length(zone_knn$nn.dists), ncol = 1)
+for (i in 1:length(zone_knn$nn.dists)) {
+  if (zone_knn$nn.dists[i] > 1000) {
+    zone_bound[i] <- NA
+  } else {
+    zone_bound[i] <- UKlittle_boundary[i]
+  }
+}
+#Remove NAs from boundary points
+zone_bound <- na.omit(zone_bound)
+# --RUN ZONATION CALCULATIONS FOR THESE POINTS-- #
+zone_rowcol <- rowColFromCell(UK50_bound, zone_bound)
+
+zone_coords <- matrix(ncol = 2, nrow = length(zone_bound))
+for (i in 1:length(zone_bound)) {
+  zone_coords[i,] <- UK50_coords[zone_bound[i],]
+}
+write.csv(zone_coords, file = "zone_coords.csv")
+####################################################################
+#Zonation sum calculations
+####################################################################
+#Calculate distance in 8 directions for the true UK boundary cells - 
+# 0˚, 45˚, 90˚, 135˚, 180˚, 225˚, 270˚, 315˚
+
+#What shifts in row and column number should happen for each direction:
+zonesteps <- matrix(c(0,1, -1,1, -1,0, -1,-1, 0,-1, 1,-1, 1,0, 1,1), ncol = 2, byrow = TRUE)
+
+#Loop through each boundary point (j loop) and direction (k loop) to tally zonation points
+pioneersum <- matrix(0, nrow = length(zone_bound), ncol = 8)
+reedsum <- matrix(0, nrow = length(zone_bound), ncol = 8)
+spartinasum <- matrix(0, nrow = length(zone_bound), ncol = 8)
+midlowsum <- matrix(0, nrow = length(zone_bound), ncol = 8)
+uppersum <- matrix(0, nrow = length(zone_bound), ncol = 8)
+notsum <- matrix(0, nrow = length(zone_bound), ncol = 8)
+
+#Pioneer
+for (j in 1:length(zone_bound)) {
+  start <- zone_rowcol[j,]
+  for (k in 1:8) {
+    zsearch <- c(start[1] + zonesteps[k,1], start[2] + zonesteps[k,2])
+    zcell <- cellFromRowCol(UK50raster, zsearch[1], zsearch[2])
+    for (i in 1:20) {
+      if (pioneercat[zcell] == 1) {
+        pioneersum[j,k] <- pioneersum[j,k] + 1
+        searchnext <- c(zsearch[1] + i*zonesteps[k,1], zsearch[2] + i*zonesteps[k,2])
+        zcell <- cellFromRowCol(UK50raster, searchnext[1], searchnext[2])
+      } else {
+        searchnext <- c(zsearch[1] + i*zonesteps[k,1], zsearch[2] + i*zonesteps[k,2])
+        zcell <- cellFromRowCol(UK50raster, searchnext[1], searchnext[2])
+      }
+    }
+  }
+}
+#write.csv(pioneersum, file = "pioneersum.csv")
+
+#Reedbeds
+for (j in 1:length(zone_bound)) {
+  start <- zone_rowcol[j,]
+  for (k in 1:8) {
+    zsearch <- c(start[1] + zonesteps[k,1], start[2] + zonesteps[k,2])
+    zcell <- cellFromRowCol(UK50raster, zsearch[1], zsearch[2])
+    for (i in 1:20) {
+      if (reedbedscat[zcell] == 2) {
+        reedsum[j,k] <- reedsum[j,k] + 1
+        searchnext <- c(zsearch[1] + i*zonesteps[k,1], zsearch[2] + i*zonesteps[k,2])
+        zcell <- cellFromRowCol(UK50raster, searchnext[1], searchnext[2])
+      } else {
+        searchnext <- c(zsearch[1] + i*zonesteps[k,1], zsearch[2] + i*zonesteps[k,2])
+        zcell <- cellFromRowCol(UK50raster, searchnext[1], searchnext[2])
+      }
+    }
+  }
+}
+write.csv(reedsum, file = "reedsum.csv")
+
+#Spartina
+for (j in 1:length(zone_bound)) {
+  start <- zone_rowcol[j,]
+  for (k in 1:8) {
+    zsearch <- c(start[1] + zonesteps[k,1], start[2] + zonesteps[k,2])
+    zcell <- cellFromRowCol(UK50raster, zsearch[1], zsearch[2])
+    for (i in 1:20) {
+      if (spartinacat[zcell] == 3) {
+        spartinasum[j,k] <- spartinasum[j,k] + 1
+        searchnext <- c(zsearch[1] + i*zonesteps[k,1], zsearch[2] + i*zonesteps[k,2])
+        zcell <- cellFromRowCol(UK50raster, searchnext[1], searchnext[2])
+      } else {
+        searchnext <- c(zsearch[1] + i*zonesteps[k,1], zsearch[2] + i*zonesteps[k,2])
+        zcell <- cellFromRowCol(UK50raster, searchnext[1], searchnext[2])
+      }
+    }
+  }
+}
+write.csv(spartinasum, file = "spartinasum.csv")
+
+#Mid-low
+for (j in 1:length(zone_bound)) {
+  start <- zone_rowcol[j,]
+  for (k in 1:8) {
+    zsearch <- c(start[1] + zonesteps[k,1], start[2] + zonesteps[k,2])
+    zcell <- cellFromRowCol(UK50raster, zsearch[1], zsearch[2])
+    for (i in 1:20) {
+      if (midlowcat[zcell] == 4) {
+        midlowsum[j,k] <- midlowsum[j,k] + 1
+        searchnext <- c(zsearch[1] + i*zonesteps[k,1], zsearch[2] + i*zonesteps[k,2])
+        zcell <- cellFromRowCol(UK50raster, searchnext[1], searchnext[2])
+      } else {
+        searchnext <- c(zsearch[1] + i*zonesteps[k,1], zsearch[2] + i*zonesteps[k,2])
+        zcell <- cellFromRowCol(UK50raster, searchnext[1], searchnext[2])
+      }
+    }
+  }
+}
+write.csv(midlowsum, file = "midlowsum.csv")
+
+#Upper marsh
+for (j in 1:length(zone_bound)) {
+  start <- zone_rowcol[j,]
+  for (k in 1:8) {
+    zsearch <- c(start[1] + zonesteps[k,1], start[2] + zonesteps[k,2])
+    zcell <- cellFromRowCol(UK50raster, zsearch[1], zsearch[2])
+    for (i in 1:20) {
+      if (uppermarshcat[zcell] == 5) {
+        uppersum[j,k] <- uppersum[j,k] + 1
+        searchnext <- c(zsearch[1] + i*zonesteps[k,1], zsearch[2] + i*zonesteps[k,2])
+        zcell <- cellFromRowCol(UK50raster, searchnext[1], searchnext[2])
+      } else {
+        searchnext <- c(zsearch[1] + i*zonesteps[k,1], zsearch[2] + i*zonesteps[k,2])
+        zcell <- cellFromRowCol(UK50raster, searchnext[1], searchnext[2])
+      }
+    }
+  }
+}
+write.csv(uppersum, file = "uppersum.csv")
+
+#Not saltmarsh
+for (j in 1:length(zone_bound)) {
+  start <- zone_rowcol[j,]
+  for (k in 1:8) {
+    zsearch <- c(start[1] + zonesteps[k,1], start[2] + zonesteps[k,2])
+    zcell <- cellFromRowCol(UK50raster, zsearch[1], zsearch[2])
+    for (i in 1:20) {
+      if (notsmcat[zcell] == 6) {
+        notsum[j,k] <- notsum[j,k] + 1
+        searchnext <- c(zsearch[1] + i*zonesteps[k,1], zsearch[2] + i*zonesteps[k,2])
+        zcell <- cellFromRowCol(UK50raster, searchnext[1], searchnext[2])
+      } else {
+        searchnext <- c(zsearch[1] + i*zonesteps[k,1], zsearch[2] + i*zonesteps[k,2])
+        zcell <- cellFromRowCol(UK50raster, searchnext[1], searchnext[2])
+      }
+    }
+  }
+}
+write.csv(notsum, file = "notsmsum.csv")
+
+
+####################################################################
+#Zonation totals and distances calculations
+####################################################################
+odd <- c(1, 3, 5, 7)
+even <- c(2, 4, 6, 8)
+
+pioneersum <- read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Zonation Cell Files/pioneersum.csv")
+pioneersum <- pioneersum[,2:9]
+#Total number of cells w/ pioneer per boundary point:
+pioneercells <- matrix(nrow = length(zone_bound), ncol = 1)
+for (i in 1:length(zone_bound)) {
+  pioneercells[i] <- sum(pioneersum[i,])
+}
+#Avg number of cells w/ pioneer per boundary point (total is 160 cells searched, 8*20)
+avgpioneercells <- pioneercells/160
+#write.csv(pioneercells, file = "pioneertotals.csv")
+#write.csv(avgpioneercells, file = "pioneeravg.csv")
+
+reedsum <- read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Zonation Cell Files/reedsum.csv")
+reedsum <- reedsum[,2:9]
+#Total number of cells w/ reedbeds per boundary point:
+reedbedscells <- matrix(nrow = length(zone_bound), ncol = 1)
+for (i in 1:length(zone_bound)) {
+  reedbedscells[i] <- sum(reedsum[i,])
+}
+#Avg number of cells w/ reedbeds per boundary point (total is 160 cells searched, 8*20)
+avgreedbedscells <- reedbedscells/160
+#write.csv(reedbedscells, file = "reedbedstotals.csv")
+#write.csv(avgreedbedscells, file = "reedbedsavg.csv")
+
+spartinasum <- read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Zonation Cell Files/spartinasum.csv")
+spartinasum <- spartinasum[,2:9]
+#Total number of cells w/ spartina per boundary point:
+spartinacells <- matrix(nrow = length(zone_bound), ncol = 1)
+for (i in 1:length(zone_bound)) {
+  spartinacells[i] <- sum(spartinasum[i,])
+}
+#Avg number of cells w/ spartina per boundary point (total is 160 cells searched, 8*20)
+avgspartinacells <- spartinacells/160
+#write.csv(spartinacells, file = "spartinatotals.csv")
+#write.csv(avgspartinacells, file = "spartinaavg.csv")
+
+midlowsum <- read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Zonation Cell Files/midlowsum.csv")
+midlowsum <- midlowsum[,2:9]
+#Total number of cells w/ mid-low per boundary point:
+midlowcells <- matrix(nrow = length(zone_bound), ncol = 1)
+for (i in 1:length(zone_bound)) {
+  midlowcells[i] <- sum(midlowsum[i,])
+}
+#Avg number of cells w/ mid-low per boundary point (total is 160 cells searched, 8*20)
+avgmidlowcells <- midlowcells/160
+#write.csv(midlowcells, file = "midlowtotals.csv")
+#write.csv(avgmidlowcells, file = "midlowavg.csv")
+
+uppersum <- read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Zonation Cell Files/uppersum.csv")
+uppersum <- uppersum[,2:9]
+#Total number of cells w/ upper marsh per boundary point:
+uppercells <- matrix(nrow = length(zone_bound), ncol = 1)
+for (i in 1:length(zone_bound)) {
+  uppercells[i] <- sum(uppersum[i,])
+}
+#Avg number of cells w/ upper marsh per boundary point (total is 160 cells searched, 8*20)
+avguppercells <- uppercells/160
+write.csv(uppercells, file = "uppertotals.csv")
+write.csv(avguppercells, file = "upperavg.csv")
+
+notsum <- read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Zonation Cell Files/notsmsum.csv")
+notsum <- notsum[,2:9]
+#Total number of cells w/ not saltmarsh per boundary point:
+notsmcells <- matrix(nrow = length(zone_bound), ncol = 1)
+for (i in 1:length(zone_bound)) {
+  notsmcells[i] <- sum(notsum[i,])
+}
+#Avg number of cells w/ not salt marsh per boundary point (total is 160 cells searched, 8*20)
+avgnotsmcells <- notsmcells/160
+#write.csv(notsmcells, file = "notsmtotals.csv")
+#write.csv(avgnotsmcells, file = "notsmavg.csv")
+
+
+##Distances in each direction
+pioneerdist <- matrix(nrow = length(zone_bound), ncol = 8)
+avgpioneerdist <- matrix(nrow = length(zone_bound), ncol = 1)
+reeddist <- matrix(nrow = length(zone_bound), ncol = 8)
+avgreeddist <- matrix(nrow = length(zone_bound), ncol = 1)
+spartinadist <- matrix(nrow = length(zone_bound), ncol = 8)
+avgspartinadist <- matrix(nrow = length(zone_bound), ncol = 1)
+midlowdist <- matrix(nrow = length(zone_bound), ncol = 8)
+avgmidlowdist <- matrix(nrow = length(zone_bound), ncol = 1)
+upperdist <- matrix(nrow = length(zone_bound), ncol = 8)
+avgupperdist <- matrix(nrow = length(zone_bound), ncol = 1)
+notsmdist <- matrix(nrow = length(zone_bound), ncol = 8)
+avgnotsmdist <- matrix(nrow = length(zone_bound), ncol = 1)
+
+for (i in 1:length(zone_bound)) {
+  for (j in odd) {
+    pioneerdist[i,j] <- 50*pioneersum[i,j]
+    reeddist[i,j] <- 50*reedsum[i,j]
+    spartinadist[i,j] <- 50*spartinasum[i,j]
+    midlowdist[i,j] <- 50*midlowsum[i,j]
+    upperdist[i,j] <- 50*uppersum[i,j]
+    notsmdist[i,j] <- 50*notsum[i,j]
+  }
+  for (j in even) {
+    pioneerdist[i,j] <- sqrt(5000)*pioneersum[i,j]
+    reeddist[i,j] <- sqrt(5000)*reedsum[i,j]
+    spartinadist[i,j] <- sqrt(5000)*spartinasum[i,j]
+    midlowdist[i,j] <- sqrt(5000)*midlowsum[i,j]
+    upperdist[i,j] <- sqrt(5000)*uppersum[i,j]
+    notsmdist[i,j] <- sqrt(5000)*notsum[i,j]
+  }
+  avgpioneerdist[i] <- mean(pioneerdist[i,])
+  avgreeddist[i] <- mean(reeddist[i,])
+  avgspartinadist[i] <- mean(spartinadist[i,])
+  avgmidlowdist[i] <- mean(midlowdist[i,])
+  avgupperdist[i] <- mean(upperdist[i,])
+  avgnotsmdist[i] <- mean(notsmdist[i,])
+}
+
+#write.csv(pioneerdist, file = "pioneerdist.csv")
+#write.csv(avgpioneerdist, file = "avgpioneerdist.csv")
+#write.csv(reeddist, file = "reeddist.csv")
+#write.csv(avgreeddist, file = "avgreeddist.csv")
+#write.csv(spartinadist, file = "spartinadist.csv")
+#write.csv(avgspartinadist, file = "avgspartinadist.csv")
+#write.csv(midlowdist, file = "midlowdist.csv")
+#write.csv(avgmidlowdist, file = "avgmidlowdist.csv")
+#write.csv(upperdist, file = "upperdist.csv")
+#write.csv(avgupperdist, file = "avgupperdist.csv")
+#write.csv(notsmdist, file = "notsmdist.csv")
+#write.csv(avgnotsmdist, file = "avgnotsmdist.csv")
+
+####################################################################
+#Number of zonations per boundary point
+####################################################################
+zonationsum <- matrix(0, nrow = length(zone_bound), ncol = 8)
+avgzonesum <- matrix(nrow = length(zone_bound), ncol = 1)
+for (i in 1:length(zone_bound)) {
+  for (j in 1:8) {
+    if (pioneersum[i,j] != 0) {
+      zonationsum[i,j] = zonationsum[i,j] + 1
+    }
+    if (reedsum[i,j] != 0) {
+      zonationsum[i,j] = zonationsum[i,j] + 1
+    }
+    if (spartinasum[i,j] != 0) {
+      zonationsum[i,j] = zonationsum[i,j] + 1
+    }
+    if (midlowsum[i,j] != 0) {
+      zonationsum[i,j] = zonationsum[i,j] + 1
+    }
+    if (uppersum[i,j] != 0) {
+      zonationsum[i,j] = zonationsum[i,j] + 1
+    }
+    if (notsum[i,j] != 0) {
+      zonationsum[i,j] = zonationsum[i,j] + 1
+    }
+  }
+  avgzonesum[i] <- mean(zonationsum[i,])
+}
+
+write.csv(zonationsum, file = "zonetypesum.csv")
+write.csv(avgzonesum, file = "avgzonetypesum.csv")
+
+####################################################################
+#Proportion of each zonation type at boundary points
+####################################################################
+midlow_p <- as.matrix(read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results files/boundary matches/Zonation/midlow/midlow_totalmatch.csv"))
+notsm_p <- as.matrix(read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results files/boundary matches/Zonation/not saltmarsh/notsm_totalsmatch.csv"))
+pioneer_p <- as.matrix(read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results files/boundary matches/Zonation/pioneer/pioneer_totalsmatch.csv"))
+reedbeds_p <- as.matrix(read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results files/boundary matches/Zonation/reedbeds/reed_totalsmatch.csv"))
+spartina_p <- as.matrix(read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results files/boundary matches/Zonation/spartina/spartina_totalsmatch.csv"))
+upper_p <- as.matrix(read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results files/boundary matches/Zonation/upper marsh/upper_totalsmatch.csv"))
+
+zonesum_p <- matrix(nrow = nrow(midlow_p), ncol = 1)
+ml_prop <- matrix(nrow = nrow(midlow_p), ncol = 1)
+not_prop <- matrix(nrow = nrow(midlow_p), ncol = 1)
+p_prop <- matrix(nrow = nrow(midlow_p), ncol = 1)
+r_prop <-matrix(nrow = nrow(midlow_p), ncol = 1)
+s_prop <- matrix(nrow = nrow(midlow_p), ncol = 1)
+u_prop <- matrix(nrow = nrow(midlow_p), ncol = 1)
+
+for (i in 1:nrow(midlow_p)) {
+  #Get total number of saltmarsh cells
+  zonesum_p[i] <- sum(midlow_p[i], notsm_p[i], pioneer_p[i], reedbeds_p[i], spartina_p[i], upper_p[i])
+  #Calculate proportions
+  ml_prop[i] <- midlow_p[i]/zonesum_p[i]
+  not_prop[i] <- notsm_p[i]/zonesum_p[i]
+  p_prop[i] <- pioneer_p[i]/zonesum_p[i]
+  r_prop[i] <- reedbeds_p[i]/zonesum_p[i]
+  s_prop[i] <- spartina_p[i]/zonesum_p[i]
+  u_prop[i] <- upper_p[i]/zonesum_p[i]
+}
+
+ml_prop[is.na(ml_prop)] <- 0
+not_prop[is.na(not_prop)] <- 0
+p_prop[is.na(p_prop)] <- 0
+r_prop[is.na(r_prop)] <- 0
+s_prop[is.na(s_prop)] <- 0
+u_prop[is.na(u_prop)] <- 0
+
+write.csv(ml_prop, file = "ml_proportion.csv")
+write.csv(not_prop, file = "notsm_proportion.csv")
+write.csv(p_prop, file = "p_proportion.csv")
+write.csv(r_prop, file = "r_proportion.csv")
+write.csv(s_prop, file = "s_proportion.csv")
+write.csv(u_prop, file = "u_proportion.csv")
+
+
+#############################################################################################
+#############################################################################################
+
+# ----------------------------------MUDFLAT CALCULATIONS----------------------------------- #
+# ----------------------------------------- DONE ------------------------------------------ #
+
+####################################################################
+#Pull out data - get boundaries and coordinates
+####################################################################
+#Use true boundary cells from saltmarsh calculations (UKlittle_boundary)
+#and start coordinates from saltmarsh calculations as well (UKstart_coords1)
+
+#Find true 50m mudflat points and get coordinates for the mudflat
+MF50_valpts <- Which(MFraster50 == 5, cells = TRUE)
+MF50val_coords <- matrix(ncol = 2, nrow = length(MF50_valpts))
+for (i in 1:length(MF50_valpts)) {
+  MF50val_coords[i,] <- UK50_coords[MF50_valpts[i],]
+}
+
+#Find closest 50m mudflat point to the boundary points
+UKmf_50knn <- knn(data = MF50val_coords, query = UKstart_coords1, k = 1)
+
+#Classify UK boundary points farther than 5km from 50m MF raster as NAs
+UKmf_50bound <- matrix(nrow = length(UKmf_50knn$nn.dists), ncol = 1)
+for (i in 1:length(UKmf_50knn$nn.dists)) {
+  if (UKmf_50knn$nn.dists[i] > 5000) {
+    UKmf_50bound[i] <- NA
+  } else {
+    UKmf_50bound[i] <- UKlittle_boundary[i]
+  }
+}
+#Remove NAs from UK boundary points for 50m MF raster
+UKmf_50bound <- na.omit(UKmf_50bound)
+# --RUN MUDFLAT CALCULATIONS FOR THESE POINTS-- #
+UKmf50_rowcol <- rowColFromCell(UK50_bound, UKmf_50bound)
+
+UKmf_coords <- matrix(ncol = 2, nrow = length(UKmf_50bound))
+for (i in 1:length(UKmf_50bound)) {
+  UKmf_coords[i,] <- UK50_coords[UKmf_50bound[i],]
+}
+write.csv(UKmf_coords, file = "UKmf_coords.csv")
+####################################################################
+#Distance to mudflat back boundary calculations
+####################################################################
+#Calculate distance in 8 directions for the true UK boundary cells - 
+# 0˚, 45˚, 90˚, 135˚, 180˚, 225˚, 270˚, 315˚
+
+#What shifts in row and column number should happen for each direction:
+MFsteps <- matrix(c(0,1, -1,1, -1,0, -1,-1, 0,-1, 1,-1, 1,0, 1,1), ncol = 2, byrow = TRUE)
+
+#Loop through each boundary point (j loop) and direction (k loop) to find saltmarsh points
+mudpt <- matrix(0, nrow = length(UKmf_50bound), ncol = 8)
+backmud <- matrix(nrow = length(UKmf_50bound), ncol = 8)
+for (j in 1:length(UKmf_50bound)) {
+  startmud <- UKmf50_rowcol[j,]
+  for (k in 1:8) {
+    mfsearch <- c(startmud[1] + MFsteps[k,1], startmud[2] + MFsteps[k,2])
+    mfcell <- cellFromRowCol(MFraster50, mfsearch[1], mfsearch[2])
+    for (i in 1:20) {
+      if (i <= 5 && MF50cat[mfcell] == 5) {
+        mudpt[j,k] <- mudpt[j,k] + 1
+        backmud[j,k] <- mfcell
+        mudsearch <- c(mfsearch[1] + i*MFsteps[k,1], mfsearch[2] + i*MFsteps[k,2])
+        mfcell <- cellFromRowCol(UK50raster, mudsearch[1], mudsearch[2])
+      } else if (i > 5 && MF50cat[mfcell] == 5) {
+        mudpt[j,k] <- mudpt[j,k] + 1
+        backmud[j,k] <- mfcell
+        mudsearch <- c(mfsearch[1] + i*MFsteps[k,1], mfsearch[2] + i*MFsteps[k,2])
+        mfcell <- cellFromRowCol(UK50raster, mudsearch[1], mudsearch[2])
+      } else if (i > 5 && MF50cat[mfcell] != 5) {
+        break
+      } else {
+        mudsearch <- c(mfsearch[1] + i*MFsteps[k,1], mfsearch[2] + i*MFsteps[k,2])
+        mfcell <- cellFromRowCol(UK50raster, mudsearch[1], mudsearch[2])
+      }
+    }
+  }
+}
+write.csv(mudpt, file = "mudcellsumsfull.csv")
+write.csv(backmud, file = "mudbackboundfull.csv")
+
+#Total number of cells w/ mudflat per boundary point:
+mudcells <- matrix(nrow = length(UKmf_50bound), ncol = 1)
+for (i in 1:length(UKmf_50bound)) {
+  mudcells[i] <- sum(mudpt[i,])
+}
+#Avg number of cells w/ saltmarsh per boundary point (total is 160 cells searched, 8*20)
+avgmudcells <- mudcells/160
+
+write.csv(mudcells, file = "mudcelltotalsfull.csv")
+write.csv(avgmudcells, file = "mudcellavgfull.csv")
+
+mudpt <- read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results files/Mud Cell Files/mudcellsumsfull.csv")
+backmud <- read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results files/Mud Cell Files/mudbackboundfull.csv")
+mudcells <- read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Mud Cell Files/mudcelltotalsfull.csv")
+avgmudcells <- read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Mud Cell Files/mudcellavgfull.csv")
+
+#Extract x and y coordinates for each back mud point and store in a matrix
+xmud <- matrix(nrow = length(UKmf_50bound), ncol = 8)
+ymud <- matrix(nrow = length(UKmf_50bound), ncol = 8)
+for (i in 1:length(UKmf_50bound)) {
+  for (j in 1:8) {
+    xmud[i,j] <- UK50_coords[backmud[i,j], 1]
+    ymud[i,j] <- UK50_coords[backmud[i,j], 2]
+  }
+}
+
+####################################################################
+#Sample plot of what the calculation does
+####################################################################
+UKmf50_1 <- matrix(UKmf_coords[152154,], ncol = 2) # First UK boundary point for mudflat
+UKmf50_x1 <- matrix(xmud[152154,], ncol = 1)         # x-coordinates for back of mud to first point
+UKmf50_y1 <- matrix(ymud[152154,], ncol = 1)         # y-coordinates for back of mud to first point
+UKmf50_dist1 <- cbind(UKmf50_x1, UKmf50_y1)       # Coordinates bound together
+
+plot(UKstart_coords1, pch = 20, 
+     xlim = c(min(UKmf50_dist1[,1], na.rm = TRUE) - 1000, max(UKmf50_dist1[,1], na.rm = TRUE) + 1000), 
+     ylim = c(min(UKmf50_dist1[,2], na.rm = TRUE) - 1000, max(UKmf50_dist1[,2], na.rm = TRUE) + 1000),
+     main = 'Back boundary of mudflat in 8 directions for sample coastal point',
+     xlab = 'Eastings (British National Grid System x-coordinate)',
+     ylab = 'Northings (British National Grid System y-coordinate)')
+points(MF50val_coords, col = 'chocolate2', pch = 1)
+points(UKmf50_1, col = 'red', pch = 19)
+points(UKmf50_dist1, col = 'blue', pch = 20)
+legend('topleft', legend = c('Coastal boundary points','Mudflat points','Sample boundary point', 
+                             'Back boundary point of mudflat'), col = c('black','chocolate2','red','blue'),
+       pch = c(20, 1, 19, 20), bty = 'n', pt.cex = 1, cex = 0.8)
+
+####################################################################
+#Average width/distance over the mudflat
+####################################################################
+#Calculate average distance to back mud point around 8 directions, output is in meters
+muddist <- matrix(ncol = 1, nrow = length(UKmf_50bound))
+totalmud <- matrix(ncol = 4, nrow = length(UKmf_50bound))
+for (i in 1:length(UKmf_50bound)) {
+  nearmud <- cbind(xmud[i,], ymud[i,])
+  for (j in 1:8) {
+    if (is.na(nearmud[j,1]) == 'TRUE') {
+      nearmud[j,1] <- UKmf_coords[i,1]
+    }
+    if (is.na(nearmud[j,2]) == 'TRUE') {
+      nearmud[j,2] <- UKmf_coords[i,2]
+    }
+  }
+  halfmud <- spDistsN1(nearmud, UKmf_coords[i,])
+  totalmud[i,] <- c(halfmud[1] + halfmud[5], halfmud[2] + halfmud[6], halfmud[3] + halfmud[7], 
+                    halfmud[4] + halfmud[8])
+  muddist[i] <- mean(totalmud[i,])
+}
+
+write.csv(totalmud, file = "mudflatdistances.csv")
+write.csv(muddist, file = "avgmudflatdistances.csv")
+
+#Exclude 0's from calculating mean in dimension-matched (to saltmarsh) mudflat file
+mud_dist <- read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results files/boundary matches/Mud/mf_distmatch.csv")
+mud_distavg <- read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results files/boundary matches/Mud/mf_avgdistmatch.csv")
+
+avgmud_dist <- matrix(nrow = nrow(mud_dist), ncol = 1)
+for (i in 1:nrow(mud_dist)) {
+  avgmud_dist[i] <- mean(mud_dist[i,][mud_dist[i,] != 0])
+  if (is.na(avgmud_dist[i]) == 'TRUE') {
+    avgmud_dist[i] <- 0
+  }
+}
+
+write.csv(avgmud_dist, file = "mf_avgdist.csv")
+
+#############################################################################################
+#############################################################################################
+
+# ------------------------------------TIDAL CALCULATIONS----------------------------------- #
+# ----------------------------------------- DONE ------------------------------------------ #
+
+####################################################################
+#Pull out data - get boundaries and coordinates
+####################################################################
+# Extract tidal range values nearest to zonation sites
+latlong <- '+proj=longlat +datum=WGS84'
+bng <- '+proj=tmerc +lat_0=49 +lon_0=-2 +k=0.9996012717 +x_0=400000 +y_0=-100000 +ellps=airy +datum=OSGB36 +units=m +no_defs'
+
+#Transform data into British National Grid coordinates - extract mean spring and neap tidal ranges
+tidal <- as.data.frame(cbind(tidalRange$ID, tidalRange$MEAN_S_RNG, tidalRange$MEAN_N_RNG, 
+                             tidalRange$DISTANCE, tidalRange$Depth, tidalRange$MEAN_SP_PC,
+                             tidalRange$MEAN_NE_PC, tidalRange$LONG_, tidalRange$LAT_1))
+colnames(tidal) <- c("ID", "Spring_Range", "Neap_Range", "Land_distance", "Depth", 
+                     "Spring_peakcurrentspeed", "Neap_peakcurrentspeed", "Easting", "Northing")
+
+#Re-transform into spatial data frame - extract coordinates and rebuild
+tidal_coords <- cbind(Easting = as.numeric(as.character(tidal$Easting)),
+                      Northing = as.numeric(as.character(tidal$Northing)))
+tidal_spatial <- SpatialPointsDataFrame(tidal_coords, data = data.frame(tidal$Spring_Range, 
+                                                                        tidal$Neap_Range, tidal$Land_distance, tidal$Depth, 
+                                                                        tidal$Spring_peakcurrentspeed, tidal$Neap_peakcurrentspeed, tidal$ID), 
+                                        proj4string = CRS('+proj=longlat +datum=WGS84'))
+#Transform to British National Grid
+tidal_bng <- spTransform(tidal_spatial, CRS(bng))
+
+#Use UKlittle_boundary and UKstart_coords1 for true boundary cells, SM50_valpts and SM50val_coords
+#for true saltmarsh points, get boundary points close to saltmarsh: UKsm_50bound
+
+#Find closest Spring range and Neap range to Saltmarsh boundary points:
+tidal_knn <- knn(data = tidal_bng@coords, query = UKsm50_coords, k = 1)
+tidal_boundary <- matrix(nrow = length(tidal_knn$nn.idx), ncol = 9)
+for (i in 1:length(tidal_knn$nn.idx)) {
+  tidal_boundary[i,1] <- tidal_bng$tidal.Spring_Range[tidal_knn$nn.idx[i]]
+  tidal_boundary[i,2] <- tidal_bng$tidal.Neap_Range[tidal_knn$nn.idx[i]]
+  tidal_boundary[i,3] <- tidal_bng$tidal.Land_distance[tidal_knn$nn.idx[i]]
+  tidal_boundary[i,4] <- tidal_bng$tidal.Depth[tidal_knn$nn.idx[i]]
+  tidal_boundary[i,5] <- tidal_bng$tidal.Spring_peakcurrentspeed[tidal_knn$nn.idx[i]]
+  tidal_boundary[i,6] <- tidal_bng$tidal.Neap_peakcurrentspeed[tidal_knn$nn.idx[i]]
+  tidal_boundary[i,7] <- tidal_bng$tidal.ID[tidal_knn$nn.idx[i]]
+  tidal_boundary[i,8] <- tidal_bng@coords[,1][tidal_knn$nn.idx[i]]
+  tidal_boundary[i,9] <- tidal_bng@coords[,2][tidal_knn$nn.idx[i]]
+}
+
+tide_range <- as.matrix(tidal_boundary[,1] - tidal_boundary[,2], ncol = 1)
+tidal_boundary <- cbind(tidal_boundary, tide_range)
+colnames(tidal_boundary) <- c("Spring_Range", "Neap_Range", "Land_distance", "Depth", 
+                              "Spring_peakcurrentspeed", "Neap_peakcurrentspeed", "ID", "Easting", 
+                              "Northing", "Tide_Range")
+write.csv(tidal_boundary, file = "tidalboundary.csv")
+
+
+#############################################################################################
+#############################################################################################
+
+# ----------------------------------BUILDING CALCULATIONS---------------------------------- #
+# ----------------------------------------- DONE ------------------------------------------ #
+
+#Use UKstart_coords1 and UKlittle_boundary
+#Find true 50m saltmarsh points and get coordinates for the saltmarsh
+SM50_valpts <- Which(SMraster50 == 4, cells = TRUE)
+SM50val_coords <- matrix(ncol = 2, nrow = length(SM50_valpts))
+for (i in 1:length(SM50_valpts)) {
+  SM50val_coords[i,] <- SM50_coords[SM50_valpts[i],]
+}
+  
+#Find true boundary points and get coordinates
+building_vals <- Which(buildings == 8, cells = TRUE)
+buildingval_coords <- matrix(ncol = 2, nrow = length(building_vals))
+for (i in 1:length(building_vals)) {
+  buildingval_coords[i,] <- buildings_coords[building_vals[i],]
+}
+
+#Find closest saltmarsh points to the buildings
+building_knn <- knn(data = SM50val_coords, query = buildingval_coords, k = 1)
+
+#Classify buildings further than 1km from 50m saltmarsh as NAs
+building_limit <- matrix(nrow = length(building_knn$nn.dists), ncol = 1)
+for (i in 1:length(building_knn$nn.dists)) {
+  if (building_knn$nn.dists[i] > 1000) {
+    building_limit[i] <- NA
+  } else {
+    building_limit[i] <- building_vals[i]
+  }
+}
+
+#Remove NAs from building cells
+building_limit <- na.omit(building_limit)
+#Get row/columns
+building_rowcol <- rowColFromCell(buildings, building_limit)
+#Get coordinates
+buildinglimit_coords <- matrix(ncol = 2, nrow = length(building_limit))
+for (i in 1:length(building_limit)) {
+  buildinglimit_coords[i,] <- buildings_coords[building_limit[i],]
+}
+
+write.csv(buildinglimit_coords, file = "building_limits.csv")
+
+##################################################
+#Find boundary points with buildings within 1 km
+##################################################
+#Find closest building points to the saltmarsh boundary points
+data_coords <- as.matrix(read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results files/Coordinates/UKsm50_coords.csv"))
+UKlittle_boundary <- cellFromXY(SMraster50, data_coords)
+
+SMbuilding_knn <- knn(data = buildingval_coords, query = data_coords, k = 1)
+
+#Classify buildings further than 1km from 50m saltmarsh as NAs
+SMbuilding_limit <- matrix(nrow = length(SMbuilding_knn$nn.dists), ncol = 1)
+for (i in 1:length(SMbuilding_knn$nn.dists)) {
+  if (SMbuilding_knn$nn.dists[i] > 1000) {
+    SMbuilding_limit[i] <- NA
+  } else {
+    SMbuilding_limit[i] <- UKlittle_boundary[i]
+  }
+}
+
+#Get row/columns
+SMbuilding_rowcol <- rowColFromCell(SMraster50, SMbuilding_limit)
+#Get coordinates
+SMbuildinglimit_coords <- matrix(ncol = 2, nrow = length(SMbuilding_limit))
+for (i in 1:length(SMbuilding_limit)) {
+  SMbuildinglimit_coords[i,] <- SM50_coords[SMbuilding_limit[i],]
+}
+
+SMbuildings <- cbind(SMbuilding_limit, SMbuildinglimit_coords)
+colnames(SMbuildings) <- c("Cell", "Easting", "Northing")
+write.csv(SMbuildinglimit_coords, file = "SMbuilding_limits.csv")
+write.csv(SMbuildings, file = "SMbuildings.csv")
+
+####################################################################
+#Building density sum calculations
+####################################################################
+#Calculate number of building cells in 8 directions for the true UK boundary cells - 
+# 0˚, 45˚, 90˚, 135˚, 180˚, 225˚, 270˚, 315˚
+
+#What shifts in row and column number should happen for each direction:
+buildsteps <- matrix(c(0,1, -1,1, -1,0, -1,-1, 0,-1, 1,-1, 1,0, 1,1), ncol = 2, byrow = TRUE)
+
+#Loop through each boundary point (j loop) and direction (k loop) to tally building points
+buildsum <- matrix(0, nrow = length(building_limit), ncol = 8)
+for (j in 1:length(building_limit)) {
+  bstart <- building_rowcol[j,]
+  for (k in 1:8) {
+    bsearch <- c(bstart[1] + buildsteps[k,1], bstart[2] + buildsteps[k,2])
+    bcell <- cellFromRowCol(buildings, bsearch[1], bsearch[2])
+    for (i in 1:20) {
+      if (buildingscat[bcell] == 8) {
+        buildsum[j,k] <- buildsum[j,k] + 1
+        bnext <- c(bsearch[1] + i*buildsteps[k,1], bsearch[2] + i*buildsteps[k,2])
+        bcell <- cellFromRowCol(buildings, bnext[1], bnext[2])
+      } else {
+        bnext <- c(bsearch[1] + i*buildsteps[k,1], bsearch[2] + i*buildsteps[k,2])
+        bcell <- cellFromRowCol(buildings, bnext[1], bnext[2])
+      }
+    }
+  }
+}
+#write.csv(buildsum, file = "buildingcells.csv")
+
+####################################################################
+#Building density totals and distances calculations
+####################################################################
+odd <- c(1, 3, 5, 7)
+even <- c(2, 4, 6, 8)
+
+#Total number of cells w/ pioneer per boundary point:
+buildingcells <- matrix(nrow = length(building_limit), ncol = 1)
+for (i in 1:length(building_limit)) {
+  buildingcells[i] <- sum(buildsum[i,])
+}
+#Avg number of cells w/ pioneer per boundary point (total is 160 cells searched, 8*20)
+avgbuildcells <- buildingcells/160
+#write.csv(buildingcells, file = "buildingtotals.csv")
+#write.csv(avgbuildcells, file = "buildingavg.csv")
+
+buildingdist <- matrix(nrow = length(building_limit), ncol = 8)
+avgbuildingdist <- matrix(nrow = length(building_limit), ncol = 1)
+
+for (i in 1:length(building_limit)) {
+  for (j in odd) {
+    buildingdist[i,j] <- 50*buildsum[i,j]
+  }
+  for (j in even) {
+    buildingdist[i,j] <- sqrt(5000)*buildsum[i,j]
+  }
+  avgbuildingdist[i] <- mean(buildingdist[i,])
+}
+#write.csv(buildingdist, file = "buildingdist.csv")
+#write.csv(avgbuildingdist, file = "avgbuildingdist.csv")
+
+
+
+
+#############################################################################################
+#############################################################################################
+
+# ----------------------------------FARMLAND CALCULATIONS---------------------------------- #
+# ----------------------------------------- DONE ------------------------------------------ #
+SM50_valpts <- as.matrix(read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/SM50_valpts.csv"))
+
+#Use UKstart_coords1 and UKlittle_boundary
+#Find true 50m saltmarsh points and get coordinates for the saltmarsh
+SM50_valpts <- Which(SMraster50 == 4, cells = TRUE)
+SM50val_coords <- matrix(ncol = 2, nrow = length(SM50_valpts))
+for (i in 1:length(SM50_valpts)) {
+  SM50val_coords[i,] <- SM50_coords[SM50_valpts[i],]
+}
+
+#Find true boundary points and get coordinates
+grade1_vals <- Which(grade1 == 1, cells = TRUE)
+grade5val_coords <- matrix(ncol = 2, nrow = length(grade5_vals))
+for (i in 1:length(grade5_vals)) {
+  grade5val_coords[i,] <- grade5_coords[grade5_vals[i],]
+}
+
+#Find closest saltmarsh points to the agricultural land
+grade1_knn <- knn(data = SM50val_coords, query = grade1val_coords, k = 1)
+grade2_knn <- knn(data = SM50val_coords, query = grade2val_coords, k = 1)
+grade3_knn <- knn(data = SM50val_coords, query = grade3val_coords, k = 1)
+grade4_knn <- knn(data = SM50val_coords, query = grade4val_coords, k = 1)
+grade5_knn <- knn(data = SM50val_coords, query = grade5val_coords, k = 1)
+
+#Classify agricultural land further than 1km from 50m saltmarsh as NAs
+grade1_limit <- matrix(nrow = length(grade1_knn$nn.dists), ncol = 1)
+grade2_limit <- matrix(nrow = length(grade2_knn$nn.dists), ncol = 1)
+grade3_limit <- matrix(nrow = length(grade3_knn$nn.dists), ncol = 1)
+grade4_limit <- matrix(nrow = length(grade4_knn$nn.dists), ncol = 1)
+grade5_limit <- matrix(nrow = length(grade5_knn$nn.dists), ncol = 1)
+for (i in 1:length(grade5_knn$nn.dists)) {
+  if (grade5_knn$nn.dists[i] > 1000) {
+    grade5_limit[i] <- NA
+  } else {
+    grade5_limit[i] <- grade5_vals[i]
+  }
+}
+
+#Remove NAs from agricultural land cells
+grade5_limit <- na.omit(grade5_limit)
+#Get row/columns
+grade5_rowcol <- rowColFromCell(grade5, grade5_limit)
+#Get coordinates
+grade5limit_coords <- matrix(ncol = 2, nrow = length(grade5_limit))
+for (i in 1:length(grade5_limit)) {
+  grade5limit_coords[i,] <- grade5_coords[grade5_limit[i],]
+}
+
+write.csv(grade5limit_coords, file = "grade5_limits.csv")
+
+###############################################
+# Locate boundary points that have farmland within 1km
+###############################################
+#Find true boundary points and get coordinates
+grade5_vals <- Which(grade5 == 5, cells = TRUE)
+grade5val_coords <- matrix(ncol = 2, nrow = length(grade5_vals))
+for (i in 1:length(grade5_vals)) {
+  grade5val_coords[i,] <- grade5_coords[grade5_vals[i],]
+}
+
+#Find closest agricultural points to the saltmarsh boundary values
+SMgrade1_knn <- knn(data = grade1val_coords, query = data_coords, k = 1)
+SMgrade2_knn <- knn(data = grade2val_coords, query = data_coords, k = 1)
+SMgrade3_knn <- knn(data = grade3val_coords, query = data_coords, k = 1)
+SMgrade4_knn <- knn(data = grade4val_coords, query = data_coords, k = 1)
+SMgrade5_knn <- knn(data = grade5val_coords, query = data_coords, k = 1)
+
+#Classify boundary points with agricultural land further than 1km away as NAs
+SMgrade1_limit <- matrix(nrow = length(SMgrade1_knn$nn.dists), ncol = 1)
+SMgrade2_limit <- matrix(nrow = length(SMgrade2_knn$nn.dists), ncol = 1)
+SMgrade3_limit <- matrix(nrow = length(SMgrade3_knn$nn.dists), ncol = 1)
+SMgrade4_limit <- matrix(nrow = length(SMgrade4_knn$nn.dists), ncol = 1)
+SMgrade5_limit <- matrix(nrow = length(SMgrade5_knn$nn.dists), ncol = 1)
+
+for (i in 1:length(SMgrade5_knn$nn.dists)) {
+  if (SMgrade5_knn$nn.dists[i] > 1000) {
+    SMgrade5_limit[i] <- NA
+  } else {
+    SMgrade5_limit[i] <- UKlittle_boundary[i]
+  }
+}
+
+#Remove NAs from agricultural land cells
+#grade5_limit <- na.omit(grade5_limit)
+#Get row/columns
+SMgrade5_rowcol <- rowColFromCell(SMraster50, SMgrade5_limit)
+#Get coordinates
+SMgrade5limit_coords <- matrix(ncol = 2, nrow = length(SMgrade5_limit))
+for (i in 1:length(SMgrade5_limit)) {
+  SMgrade5limit_coords[i,] <- SM50_coords[SMgrade5_limit[i],]
+}
+
+SMgrade5 <- cbind(SMgrade5_limit, SMgrade5limit_coords)
+colnames(SMgrade5) <- c("Cell", "Easting", "Northing")
+
+write.csv(SMgrade5, file = "SMgrade5.csv")
+
+#############################################################################################
+#############################################################################################
+
+# -------------------------------------MATCH DIMENSIONS------------------------------------ #
+# ------------------------------------------ DONE ----------------------------------------- #
+#Match closest boundary points for each calculation to the saltmarsh points to make dimensions
+#the same, tidal dimensions already match.
+UKsm50_coords <- read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results files/Coordinates/UKsm50_coords.csv")
+
+#Fetch points
+#Find closest fetch points to the saltmarsh
+fetch_knn <- knn(data = full_landcoords, query = UKsm50_coords, k = 1)
+landmatch <- matrix(ncol = 1, nrow = length(fetch_knn$nn.idx))
+for (i in 1:length(fetch_knn$nn.idx)) {
+  #for (j in 1:8) {
+  landmatch[i] <- avgdist[fetch_knn$nn.idx[i]]
+  #}
+}
+write.csv(landmatch, file = "land_avgdistmatch.csv")
+
+#Zonation points
+#Find closest zonation points to the saltmarsh
+zonation_knn <- knn(data = zone_coords, query = UKsm50_coords, k = 1)
+u_match <- matrix(ncol = 8, nrow = length(zonation_knn$nn.idx))
+for (i in 1:length(zonation_knn$nn.idx)) {
+  for (j in 1:8) {
+    u_match[i,j] <- udist[zonation_knn$nn.idx[i],j]
+  }
+}
+write.csv(u_match, file = "upper_distmatch.csv")
+
+#Mudflat points
+#Find closest mudflat points to the saltmarsh
+mudflat_knn <- knn(data = UKmf_coords, query = UKsm50_coords, k = 1)
+mf_match <- matrix(ncol = 8, nrow = length(mudflat_knn$nn.idx))
+for (i in 1:length(mudflat_knn$nn.idx)) {
+  for (j in 1:8) {
+    mf_match[i,j] <- mfdist[mudflat_knn$nn.idx[i],j]
+  }
+}
+write.csv(mf_match, file = "mf_distmatch.csv")
+
+#Building points
+#Find closest building points to the saltmarsh
+buildings_knn <- knn(data = buildinglimit_coords, query = UKsm50_coords, k = 1)
+b_match <- matrix(ncol = 8, nrow = length(buildings_knn$nn.idx))
+for (i in 1:length(buildings_knn$nn.idx)) {
+  for (j in 1:8) {
+    b_match[i,j] <- bsum[buildings_knn$nn.idx[i],j]
+  }
+}
+write.csv(b_match, file = "b_summatch.csv")
+
+SMbuildings_knn <- knn(data = SMbuildinglimit_coords, query = data_coords, k = 1)
+
+
+#############################################################################################
+#############################################################################################
+
+sm_dist <- as.matrix(read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results files/boundary matches/Marsh/marshlengthfinal8.csv"))
+sm_density <- as.matrix(read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results files/boundary matches/Marsh/marshcellavg8.csv"))
+
+full_landcoords <- read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results files/Coordinates/full_landcoords.csv")
+zone_coords <- read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results files/Coordinates/zone_coords.csv")
+UKmf_coords <- read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results files/Coordinates/UKmf_coords.csv")
+buildinglimit_coords <- read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results files/Coordinates/building_limits.csv")
+UKsm50_coords <- read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results files/Coordinates/UKsm50_coords.csv")
+
+
+#############################################################################################
+#############################################################################################
+#############################################################################################
+#############################################################################################
