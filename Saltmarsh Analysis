@@ -1,0 +1,2066 @@
+##################
+#
+# OBJECTIVES:
+# - Identify impact of wave fetch (wave exposure) on saltmarsh zonation type 
+#(probability of finding particular types)
+# - Identify to what extent wave exposure limits marsh development. Is the relationship 
+#smooth or does a threshold exist?
+# - Width of marsh => variation in level of protection
+# - How close saltmarsh to areas where it could have a protecting effect?
+
+# PART 2 - Regression/calculations
+# i) Fit model linking zonation type with fetch, tidal range and marsh size 
+#     (hypotheses: pioneer vegetation more prevalent in sheltered locations?
+#                  high marsh more extensive at higher wave fetch?
+#                  anything else?
+#                  probable effect of sediment grain size on 
+#establishment/development - not accounted for here?)
+# ii) Fit model linking marsh size with fetch and tidal range
+#     (hypotheses: marshes are larger in more sheltered areas?
+#                  gradient of marsh is linked to area)
+
+
+##################
+# Load relevant packages for dealing with spatial data 
+library(sp)
+library(raster)
+library(nabor)
+library(maptools)
+library(rgeos)
+library(rgdal)
+library(gstat)
+library(geosphere)
+library(ggplot2)
+library(ggmap)
+library(RColorBrewer)
+library(stats)
+library(mgcv)
+library(dplyr)
+library(plyr)
+library(MuMIn)
+
+#############################################################################################
+#############################################################################################
+
+# ----------------------------------------LOAD DATA---------------------------------------- #
+## Coordinates
+data_coords <- as.matrix(read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results files/Coordinates/UKsm50_coords.csv"))
+colnames(data_coords) <- c("Easting", "Northing")
+data_coords <- data.frame(data_coords)
+UK_coords <- as.matrix(read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results files/Coordinates/UKstart_coords1.csv"))
+land_coords <- as.matrix(read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results files/Coordinates/full_landcoords.csv"))
+build_coords <- as.matrix(read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results files/Coordinates/building_limits.csv"))
+UK_poly <- readOGR("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/high_water_polygon/high_water_polygon.shp")
+UK_poly <- fortify(UK_poly)
+
+#Saltmarsh, buildings, and agricultural land grades
+UK_sm <- readOGR("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Saltmarsh_Zonation/SaltMarsh_extents.shp")
+#Fortify based on regions - clipped in heat map section
+build_essex <- readOGR("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/UK buildings/buildings_essex.shp")
+build_morecambe <- readOGR("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/UK buildings/buildings_morecambe.shp")
+grade1 <- readOGR("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/agri_land_class/agri_land_class_ALC_GRADE_Grade1.shp")
+grade1 <- fortify(grade1)
+grade2 <- readOGR("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/agri_land_class/agri_land_class_ALC_GRADE_Grade2.shp")
+grade2 <- fortify(grade2)
+grade3 <- readOGR("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/agri_land_class/agri_land_class_ALC_GRADE_Grade3.shp")
+grade3 <- fortify(grade3)
+grade4 <- readOGR("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/agri_land_class/agri_land_class_ALC_GRADE_Grade4.shp")
+grade4 <- fortify(grade4)
+grade5 <- readOGR("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/agri_land_class/agri_land_class_ALC_GRADE_Grade5.shp")
+grade5 <- fortify(grade5)
+
+## Saltmarsh
+sm_dist <- as.matrix(read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results files/boundary matches/Marsh/marshlengthfinal8.csv"))
+sm_density <- as.matrix(read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results files/boundary matches/Marsh/marshcellavg8.csv"))
+
+## Mudflat
+mf_dist <- as.matrix(read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results files/boundary matches/Mud/mf_avgdistmatch.csv"))
+mf_density <- as.matrix(read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results files/boundary matches/Mud/mf_avgcellmatch.csv"))
+
+## Fetch (nearest land)
+fetch_dist <- as.matrix(read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results files/boundary matches/Land/land_avgdistmatch.csv"))
+fetch_distsmall <- as.matrix(read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results files/Nearest Land Files/full_avgdist.csv"))
+fetch_smdist <- as.matrix(read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results files/boundary SM matches/Land/fetch_smdist.csv"))
+
+## Saltmarsh Zonation
+zone_avgsum <- as.matrix(read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results files/boundary matches/Zonation/avgzonesum_match.csv"))
+
+ml_density <- as.matrix(read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results files/boundary matches/Zonation/midlow/avgmidlow_cellmatch.csv"))
+ml_dist <- as.matrix(read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results files/boundary matches/Zonation/midlow/avgmidlow_distmatch.csv"))
+ml_prop <- as.matrix(read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results files/boundary matches/Zonation/ml_proportion.csv"))
+
+notsm_density <- as.matrix(read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results files/boundary matches/Zonation/not saltmarsh/notsm_avgcellmatch.csv"))
+notsm_dist <- as.matrix(read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results files/boundary matches/Zonation/not saltmarsh/notsm_avgdistmatch.csv"))
+notsm_prop <- as.matrix(read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results files/boundary matches/Zonation/notsm_proportion.csv"))
+
+p_density <- as.matrix(read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results files/boundary matches/Zonation/pioneer/pioneer_avgcellsmatch.csv"))
+p_dist <- as.matrix(read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results files/boundary matches/Zonation/pioneer/pioneer_avgdistmatch.csv"))
+p_prop <- as.matrix(read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results files/boundary matches/Zonation/p_proportion.csv"))
+
+r_density <- as.matrix(read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results files/boundary matches/Zonation/reedbeds/reed_avgcellsmatch.csv"))
+r_dist <- as.matrix(read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results files/boundary matches/Zonation/reedbeds/reed_avgdistmatch.csv"))
+r_prop <- as.matrix(read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results files/boundary matches/Zonation/r_proportion.csv"))
+
+s_density <- as.matrix(read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results files/boundary matches/Zonation/spartina/spartina_avgcellmatch.csv"))
+s_dist <- as.matrix(read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results files/boundary matches/Zonation/spartina/spartina_avgdistmatch.csv"))
+s_prop <- as.matrix(read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results files/boundary matches/Zonation/s_proportion.csv"))
+
+u_density <- as.matrix(read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results files/boundary matches/Zonation/upper marsh/upper_avgcellmatch.csv"))
+u_dist <- as.matrix(read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results files/boundary matches/Zonation/upper marsh/upper_avgdistmatch.csv"))
+u_prop <- as.matrix(read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results files/boundary matches/Zonation/u_proportion.csv"))
+
+## Tides
+tide_data <- as.matrix(read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results files/boundary matches/tidalboundary.csv"))
+tidal <- data.frame(tide_data)
+
+## Buildings
+b_density <- as.matrix(read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results files/boundary matches/Building/b_avgcellsmatch.csv"))
+b_dist <- as.matrix(read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results files/boundary matches/Building/b_avgdistmatch.csv"))
+b_smalldensity <- as.matrix(read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results files/boundary SM matches/Building/b_smdensity.csv"))
+b_presence <- as.matrix(read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results files/Building Files/SMbuildings.csv"))
+
+## Agricultural Land
+g1_presence <- as.matrix(read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results Files/Farmland/SMgrade1.csv"))
+g2_presence <- as.matrix(read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results Files/Farmland/SMgrade2.csv"))
+g3_presence <- as.matrix(read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results Files/Farmland/SMgrade3.csv"))
+g4_presence <- as.matrix(read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results Files/Farmland/SMgrade4.csv"))
+g5_presence <- as.matrix(read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Results Files/Farmland/SMgrade5.csv"))
+
+# ------------------------------------------PLOTS------------------------------------------ #
+.pardefault <- par(no.readonly = T)     #Saves original graphical parameters
+
+## Exploratory graphs
+
+## Wave fetch versus saltmarsh width
+plot(fetch_dist, sm_dist, pch = '.', xlab = "Wave fetch (kilometres)", 
+     ylab = "Saltmarsh average width (metres)",
+     main = "Relationship between wave fetch and saltmarsh width")
+
+## Wave fetch versus saltmarsh density
+plot(fetch_dist, sm_density, pch = '.', xlab = "Wave fetch (kilometres)", 
+     ylab = "Saltmarsh density (cells saltmarsh per total cells sampled)",
+     main = "Relationship between wave fetch and saltmarsh density")
+
+## Wave fetch versus mudflat width
+plot(fetch_dist, mf_dist, pch = '.', xlab = "Wave fetch (kilometres)", 
+     ylab = "Mudflat average width (metres)",
+     main = "Relationship between wave fetch and mudflat width")
+
+## Wave fetch versus mudflat density
+plot(fetch_dist, mf_density, pch = '.', xlab = "Wave fetch (kilometres)", 
+     ylab = "Mudflat density (cells mudflat per total cells sampled)",
+     main = "Relationship between wave fetch and mudflat density")
+
+## Wave fetch versus zonation types - total cells
+plot(fetch_dist, zone_avgsum, pch = '.', xlab = "Wave fetch (kilometres)", 
+     ylab = "Average number of zones per boundary point", main = "Relationship between wave fetch
+     and average number of saltmarsh zonation types")
+
+## Wave fetch versus zonation types - distance
+plot(fetch_dist, ml_dist, pch = '.', xlab = "Wave fetch (kilometres)", 
+     ylab = "Distance across zonation type (metres)",
+     main = "Relationship between wave fetch and distance across saltmarsh zonation types")
+points(fetch_dist, u_dist, pch = '.', col = 'purple')
+points(fetch_dist, s_dist, pch = '.', col = 'forestgreen')
+points(fetch_dist, p_dist, pch = '.', col = 'blue')
+points(fetch_dist, r_dist, pch = '.', col = 'orange')
+points(fetch_dist, notsm_dist, pch = '.', col = 'red')
+legend(x = 80, y = 1300, legend = c('Mid-low', 'Upper', 'Spartina', 'Pioneer', 'Reedbeds', 
+                                    'Not saltmarsh'), col = c('black', 'purple', 'forestgreen', 'blue', 
+                                                              'orange', 'red'), 
+       bty = 'n', pt.cex = 1, cex = 0.8, pch = c(20,20,20,20,20,20))
+
+cutpoints <- c(0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110)
+fetchdist_discrete <- cut(fetch_dist, breaks = cutpoints)
+
+#Proportion of zone types in each category of wave fetch
+par(mfrow = c(2, 3), oma = c(2, 2, 2, 2))
+boxplot(p_prop ~ fetchdist_discrete, pch = '.', outline = FALSE, col = 'blue', main = 'Pioneer')
+boxplot(s_prop ~ fetchdist_discrete, pch = '.', outline = FALSE, col = 'forestgreen', main = 'Spartina')
+boxplot(ml_prop ~ fetchdist_discrete, pch = '.', outline = FALSE, main = 'Mid-low', col = 'orange')
+boxplot(u_prop ~ fetchdist_discrete, pch = '.', outline = FALSE, col = 'purple', main = 'Upper marsh')
+plot.new()
+boxplot(r_prop ~ fetchdist_discrete, pch = '.', outline = FALSE, col = 'black', main = 'Reedbeds')
+title(main = "Relationship between wave fetch and proportion of saltmarsh for each zonation type", 
+      outer = TRUE, cex.main = 1.5)
+mtext("Wave fetch (kilometres)", side = 1, outer = TRUE, family = "sans", cex = 0.8, font = 2)
+mtext("Proportion of saltmarsh", side = 2, outer = TRUE, family = 'sans', 
+      cex = 0.8, font = 2)
+
+par(.pardefault)      #Restores original graphical parameters
+par(mfrow = c(1,1))
+
+## Wave fetch versus tidal range
+plot(fetch_dist, tide_data[,"Spring_Range"], pch = '.', xlab = "Wave Fetch (kilometres)", 
+     ylab = "Spring Tidal Range", main = "Relationship between wave fetch and spring tidal range")
+
+## Tidal ranges versus saltmarsh width
+plot(tide_data[, "Spring_Range"], sm_dist, pch = '.', xlab = "Spring Tidal Range", 
+     ylab = "Saltmarsh Width (metres)", 
+     main = "Relationship between spring tidal range and saltmarsh width")
+
+## Tidal ranges versus mudflat width
+plot(tide_data[, "Spring_Range"], mf_dist, pch = '.', xlab = "Spring Tidal Range", 
+     ylab = "Mudflat Width (metres)", 
+     main = "Relationship between spring tidal range and mudflat width")
+
+## Saltmarsh width versus mudflat width
+plot(sm_dist, mf_dist, pch = '.', xlab = "Saltmarsh Width (metres)", ylab = "Mudflat width (metres)",
+     main = "Relationship between saltmarsh and mudflat widths")
+
+## Saltmarsh width versus wave attenuation
+sm_wave <- 88.76*sm_dist/(15.98 + sm_dist)
+fetch_wave <- sm_wave*fetch_dist/100
+effectivefetch <- fetch_dist - fetch_wave
+
+plot(sm_dist, sm_wave, pch = '.', xlab = "Saltmarsh Width (metres)", ylab = "Wave Attenuation (%)",
+     main = "Relationship between saltmarsh width and wave attenuation")
+plot(sm_dist, effectivefetch, pch = '.', xlab = "Saltmarsh Width (metres)", 
+     ylab = "Effective Wave Fetch (kilometres)",
+     main = "Relationship between saltmarsh width and effective wave fetch")
+plot(fetch_dist, effectivefetch, pch = '.', xlab = "Wave Fetch (kilometres)", 
+     ylab = "Effective Wave Fetch (kilometres)", 
+     main = "Wave fetch versus effective wave fetch moderated by saltmarsh")
+
+#############################################################################################
+#############################################################################################
+
+# -----------------------------------------HEAT MAPS--------------------------------------- #
+
+## Heat map of fetch
+#Add effective fetch
+sm_wavelittle <- 88.76*fetch_smdist/(15.98 + fetch_smdist)
+fetch_wavelittle <- sm_wavelittle*fetch_distsmall/100   
+#(/100 because wave attenuation is in %)
+effectfetch <- fetch_distsmall - fetch_wavelittle
+fetch <- cbind(land_coords, fetch_distsmall, effectfetch)
+fetch <- data.frame(fetch)
+colnames(fetch) <- c("Easting", "Northing", "Fetch", "Effective_Fetch")
+fetch$Fetch <- (fetch$Fetch)*1000
+fetch$Effective_Fetch <- (fetch$Effective_Fetch)*1000
+fetch <- fetch[order(fetch$Fetch),]
+
+## UK coast - cropped
+UKcoast = ggplot(UK_poly) + scale_y_continuous(limits = c(0, 750000)) +
+  geom_path(aes(long, lat, group = group), alpha = 0.7, size = 0.5, colour = "gray78")
+#UKcoast = ggplot(UK_poly) + ylim(0, 750000) +
+#  geom_path(aes(long, lat, group = group), alpha = 0.7, size = 0.5, colour = "gray78")
+## UK coast - Essex
+UKcoast = ggplot(UK_poly) + scale_x_continuous(limits = c(500000, 620000)) +
+  scale_y_continuous(limits = c(150000, 230000)) +
+  geom_path(aes(long, lat, group = group), alpha = 0.7, size = 0.5, colour = "gray78")
+## UK coast - Morecambe Bay
+UKcoast = ggplot(UK_poly) + scale_x_continuous(limits = c(280000, 365000)) +
+  scale_y_continuous(limits = c(412000, 500000)) + 
+  geom_path(aes(long, lat, group = group), alpha = 0.7, size = 0.5, colour = "gray78")
+## UK coast - exposed area
+UKcoast = ggplot(UK_poly) + scale_x_continuous(limits = c(580000, 700000)) +
+  scale_y_continuous(limits = c(200000, 320000)) + 
+  geom_path(aes(long, lat, group = group), alpha = 0.7, size = 0.5, colour = "gray78")
+
+## Essex
+UK_localessex <- ggplot(UK_poly) + scale_x_continuous(limits = c(617500, 627900)) +
+  scale_y_continuous(limits = c(220900, 230300)) +
+  geom_path(aes(long, lat, group = group), alpha = 0.7, size = 0.5, colour = "gray78")
+
+## Morecambe
+UK_localmorecambe <- ggplot(UK_poly) + scale_x_continuous(limits = c(337000, 351700)) +
+  scale_y_continuous(limits = c(448000, 464500)) +
+  geom_path(aes(long, lat, group = group), alpha = 0.7, size = 0.5, colour = "gray78")
+
+## Local areas with highest protection index
+UK_highprotect <- ggplot(UK_poly) + scale_x_continuous(limits = c(291800, 313700)) +
+  scale_y_continuous(limits = c(74900, 93280)) +
+  geom_path(aes(long, lat, group = group), alpha = 0.7, size = 0.5, colour = "gray78")
+
+#####################################################################
+#####################################################################
+
+## Heat map of wave fetch values
+fetch_heat = UK_highprotect + geom_point(data = fetch, shape = 20, 
+                                         aes(Easting, Northing, Fetch, colour = Fetch)) +
+  scale_colour_gradientn(colours = rev(brewer.pal(11, "Spectral")), limits = c(0, 100000)) +
+  coord_equal() + labs(x = "Easting (m)", y = "Northing (m)", colour = "Fetch (m)") +
+  guides(alpha = FALSE) + ggtitle("Wave fetch near \nExmouth")
+fetch_heat
+dev.copy2pdf(file = "/Users/reidgilbertson/Desktop/localfetch_Exmouth.pdf")
+dev.off
+
+## Heat map of effective wave fetch values
+effetch_heat = UK_highprotect + geom_point(data = fetch, shape = 20, 
+                                           aes(Easting, Northing, Effective_Fetch, colour = Effective_Fetch)) +
+  scale_colour_gradientn(colours = rev(brewer.pal(11, "Spectral")), limits = c(0, 100000)) +
+  coord_equal() + labs(x = "Easting (m)", y = "Northing (m)", colour = "Effective \nFetch (m)") +
+  guides(alpha = FALSE) + ggtitle("Effective wave fetch near \nExmouth")
+effetch_heat
+dev.copy2pdf(file = "/Users/reidgilbertson/Desktop/localeffectivefetch_Exmouth.pdf")
+dev.off
+
+## Heat map of saltmarsh width
+saltmarsh <- cbind(data_coords, sm_dist)
+saltmarsh <- data.frame(saltmarsh)
+colnames(saltmarsh) <- c("Easting", "Northing", "Width")
+saltmarsh$Width <- (saltmarsh$Width)
+saltmarsh <- saltmarsh[order(saltmarsh$Width),]
+
+marsh_heat = UK_highprotect + geom_point(data = saltmarsh, shape = 20,
+                                         aes(Easting, Northing, Width, colour = Width)) +
+  scale_colour_gradientn(colours = rev(brewer.pal(11, "Spectral"))) +
+  coord_equal() + labs(x = "Easting (m)", y = "Northing (m)", colour = "Width (m)") +
+  guides(alpha = FALSE) + ggtitle("Saltmarsh average width near \nExmouth")
+marsh_heat
+dev.copy2pdf(file = "/Users/reidgilbertson/Desktop/localmarsh_Exmouth.pdf")
+dev.off
+
+## Heat map of building density
+## Color palettes to try (for contrast with spectral) are "BrBG" and "PuOr"
+build <- cbind(build_coords, b_smalldensity)
+build <- data.frame(build)
+colnames(build) <- c("Easting", "Northing", "Buildings")
+build <- build[order(build$Buildings),]
+
+building_heat = UKcoast + geom_point(data = build, shape = 18, 
+                                     aes(Easting, Northing, Buildings, colour = Buildings, 
+                                         alpha = Buildings)) +
+  scale_colour_gradientn(colours = rev(brewer.pal(11, "Spectral"))) +
+  coord_equal() + labs(x = "Easting (m)", y = "Northing (m)", colour = "Building density") +
+  guides(alpha = FALSE) + ggtitle("Building density around the UK coastline")
+building_heat
+dev.copy2pdf(file = "/Users/reidgilbertson/Desktop/building_heat.pdf")
+dev.off
+
+## Building density + SM width
+## Shift data so it is more visible rather than overlapping
+saltmarsh_shift <- saltmarsh
+for (i in 1:nrow(saltmarsh)) {
+  if (saltmarsh$Easting[i] >= 400000) {
+    saltmarsh_shift$Easting[i] <- saltmarsh$Easting[i] + 10000
+  }
+  else {
+    saltmarsh_shift$Easting[i] <- saltmarsh$Easting[i] - 10000
+  }
+  if (saltmarsh$Northing[i] >= 300000) {
+    saltmarsh_shift$Northing[i] <- saltmarsh$Northing[i] + 10000
+  }
+  else {
+    saltmarsh_shift$Northing[i] <- saltmarsh$Northing[i] - 10000
+  }
+}
+
+build_shift <- build
+for (i in 1:nrow(build)) {
+  if (build$Easting[i] >= 400000) {
+    build_shift$Easting[i] <- build$Easting[i] - 10000
+  }
+  else {
+    build_shift$Easting[i] <- build$Easting[i] + 10000
+  }
+  if (build$Northing[i] >= 300000) {
+    build_shift$Northing[i] <- build$Northing[i] - 10000
+  }
+  else {
+    build_shift$Northing[i] <- build$Northing[i] + 10000
+  }
+}
+
+SMbuild <- UKcoast + 
+  geom_point(data = build_shift, shape = 20, aes(Easting, Northing, Buildings, colour = Buildings)) +
+  scale_colour_gradientn(colours = rev(brewer.pal(11, "PuOr"))) + 
+  coord_equal() + labs(x = "Easting (m)", y = "Northing (m)", colour = "Building\ndensity") +
+  geom_point(data = saltmarsh_shift, shape = 21, size = 0.8, aes(Easting, Northing, Width, fill = Width, 
+                                                                 alpha = Width)) +
+  scale_fill_gradientn(colors = rev(brewer.pal(11, "Spectral"))) + guides(alpha = FALSE) + 
+  labs(fill = "Saltmarsh \nWidth (km)") +
+  ggtitle("Saltmarsh widths and building \ndensity around the UK coastline")
+SMbuild
+dev.copy2pdf(file = "/Users/reidgilbertson/Desktop/SMbuilding_heat.pdf")
+dev.off
+
+SMbuild <- UKcoast + 
+  geom_point(data = build_shift, shape = 20, size = 0.8, aes(Easting, Northing, Buildings, 
+                                                             colour = Buildings)) + scale_colour_gradientn(colours = rev(brewer.pal(11, "Spectral"))) + 
+  coord_equal() + labs(x = "Easting (m)", y = "Northing (m)", 
+                       colour = "Saltmarsh \nWidth (km) \n and Building \ndensity") +
+  geom_point(data = saltmarsh_shift, shape = 17, size = 0.7, aes(Easting, Northing, Width, colour = Width, 
+                                                                 alpha = Width)) + 
+  guides(alpha = FALSE) + ggtitle("Saltmarsh widths and building \ndensity around the UK coastline")
+SMbuild
+
+
+
+
+## Heat map of farmland presence
+g1_class <- g1_presence
+g2_class <- g2_presence
+g3_class <- g3_presence
+g4_class <- g4_presence
+g5_class <- g5_presence
+#Remove NAs and add the classification
+g1_class <- na.omit(g1_class)
+g2_class <- na.omit(g2_class)
+g3_class <- na.omit(g3_class)
+g4_class <- na.omit(g4_class)
+g5_class <- na.omit(g5_class)
+g1_class <- data.frame(g1_class, rep(1, length.out = nrow(g1_class)), rep("Excellent", length.out = nrow(g1_class)))
+g2_class <- data.frame(g2_class, rep(2, length.out = nrow(g2_class)), rep("Very Good", length.out = nrow(g2_class)))
+g3_class <- data.frame(g3_class, rep(3, length.out = nrow(g3_class)), rep("Good to Moderate", length.out = nrow(g3_class)))
+g4_class <- data.frame(g4_class, rep(4, length.out = nrow(g4_class)), rep("Poor", length.out = nrow(g4_class)))
+g5_class <- data.frame(g5_class, rep(5, length.out = nrow(g5_class)), rep("Very Poor", length.out = nrow(g5_class)))
+colnames(g1_class) = colnames(g2_class) = colnames(g3_class) = colnames(g4_class) = colnames(g5_class) = 
+  c("Cell", "Easting", "Northing", "Grade", "Quality")
+aglandgrade <- rbind(g1_class, g2_class, g3_class, g4_class, g5_class)
+aglandgrade <- data.frame(aglandgrade)
+
+#With specified color - try Spectral and Dark2 palettes
+agland_heat = UKcoast + geom_jitter(data = aglandgrade, shape = 20,
+                                    aes(Easting, Northing, colour = as.factor(Grade), 
+                                        alpha = as.factor(Grade))) + 
+  coord_equal() + guides(alpha = FALSE) +
+  labs(x = "Easting (m)", y = "Northing (m)", colour = "Agricultural \nLand Grade") +
+  scale_color_brewer(palette = "Spectral") + ggtitle("Agricultural land grade around the UK coastline")
+agland_heat
+dev.copy2pdf(file = "/Users/reidgilbertson/Desktop/agland_heat.pdf")
+dev.off
+
+#Set color, alpha and shape
+agland_heat = UKcoast + geom_jitter(data = aglandgrade, 
+                                    aes(Easting, Northing, colour = as.factor(Grade), 
+                                        alpha = as.factor(Grade), shape = as.factor(Grade))) + 
+  coord_equal() + guides(alpha = FALSE) +
+  labs(x = "Easting (m)", y = "Northing (m)", colour = "Agricultural \nLand Grade",
+       shape = "Agricultural \nLand Grade") +
+  scale_color_brewer(palette = "Spectral") + ggtitle("Agricultural land grade around the UK coastline")
+agland_heat
+
+
+## Shift coordinates to avoid overlap
+grade1_shift <- g1_class
+for (i in 1:nrow(g1_class)) {
+  if (grade1_shift$Easting[i] >= 400000) {
+    grade1_shift$Easting[i] <- g1_class$Easting[i] + 20000
+  }
+  else {
+    grade1_shift$Easting[i] <- g1_class$Easting[i] - 20000
+  }
+  if (grade1_shift$Northing[i] >= 300000) {
+    grade1_shift$Northing[i] <- g1_class$Northing[i] + 20000
+  }
+  else {
+    grade1_shift$Northing[i] <- g1_class$Northing[i] - 20000
+  }
+}
+
+aglandshift <- rbind(grade1_shift, grade2_shift, g3_class, grade4_shift, grade5_shift)
+aglandshift <- data.frame(aglandshift)
+#With specified color - try Spectral and Dark2 palettes
+agland_heat = UKcoast + geom_point(data = aglandshift, shape = 20,
+                                   aes(Easting, Northing, colour = as.factor(Grade), 
+                                       alpha = as.factor(Grade))) + 
+  coord_equal() + guides(alpha = FALSE) +
+  labs(x = "Easting (m)", y = "Northing (m)", colour = "Agricultural \nLand Grade") +
+  scale_color_brewer(palette = "Spectral") + ggtitle("Agricultural land grade around the UK coastline")
+agland_heat
+dev.copy2pdf(file = "/Users/reidgilbertson/Desktop/agland_heatshift.pdf")
+dev.off
+
+
+#############################################################################################
+#############################################################################################
+
+# ----------------------------------------REGRESSION--------------------------------------- #
+
+## Calculate measure of wave attenuation by saltmarsh vegetation (in distance traveled over saltmarsh)
+## using data from Shepard et al. 2011, Koch et al. 2009, Möller 2006, Möller and Spencer 2002, and
+## Moeller, Spencer and French 1997.
+
+#Distance over marsh (metres)
+x <- c(7, 10, 11, 15, 20, 30, 35, 15, 3.5, 7, 9, 10, 20, 30, 40, 70, 90, 100, 200, 300, 400,
+       500, 550, 310, 10, 163, 25, 41, 66, 180)
+#Percent wave attenuation
+y <- c(16.2, 21.9, 23.85, 31.45, 39.95, 48.45, 49.45, 50, 40, 46, 50, 52, 55, 57, 60, 66,
+       70, 74, 78, 80, 83, 88, 90, 92, 21, 87.37, 51, 77.4, 87.4, 80)
+#Plot the data
+plot(x, y, pch = 20, xlim = c(0, 700), ylim = c(0, 120), xlab = "Distance over saltmarsh (metres)",
+     ylab = "Wave attenuation (%)", main = "Wave attenuation by saltmarsh")
+
+#Try some models 
+#Power function
+m <- nls(y ~ a*x/(b+x))
+m
+summary(m)
+
+#Less explicit power function
+#n <- nls(y ~ a*x^b)
+#n
+#summary(n)
+
+#Use Akaike's Information Criterion to provide base test between the two models: m (power function) 
+#model is marginally 'better' with a slightly lower AIC value.
+#AIC(m)
+#AIC(n)
+
+#Plot empirical paper data with fitted function
+plot(x, y, pch = 20, xlim = c(0, 700), ylim = c(0, 120), xlab = "Distance over saltmarsh (metres)",
+     ylab = "Wave attenuation (%)", main = "Wave attenuation by saltmarsh")
+x2 <- seq(0, 1000, by = 10)
+fit1 <- 88.76*x2/(15.98 + x2)
+
+lines(x2, fit1, col = "orange", lwd = 2)
+legend(500, 127, legend = c("Data", "Fitted model"), col = c("black", "orange"), bty = 'n', pt.cex = 1,
+       cex = 0.8, pch = c(20, NA), lty = c(NA, 1), lwd = c(NA, 2))
+
+## Choose model from full dataset, 'm,' y = a*x/(b + x), a = 88.76, b = 15.98
+
+## Try log-lin model: take log of x. 
+#plot(y ~ log(x), pch = 20)
+#linfit <- lm(y ~ log(x))
+#summary(linfit)
+#lines(log(x), fitted(linfit), col = "blue")
+#Not as good, p-value well above 0.05 confidence interval, stick with power function. 
+
+
+####################################################################
+## Regression - presence of marsh
+####################################################################
+#Create sequences over range of predictor variables for predict function later on
+xfetch <- seq(0, 105, length.out = 180968)
+xnorthing <- seq(24800, 658150, length.out = 180968)
+xrange <- seq(0, 13, length.out = 180968)
+xcurrent <- seq(0, 3, length.out = 180968)
+xsmdensity <- seq(0, 1, length.out = 180968)
+
+#Put predictor variables into matrices
+model_fetchdist <- matrix(fetch_dist, ncol = 1)
+model_tiderange <- matrix(tidal$Spring_Range, ncol = 1)
+model_tidecurrent <- matrix(tidal$Spring_peakcurrentspeed, ncol = 1)
+model_northing <- matrix(data_coords$Northing, ncol = 1)
+
+## Easy way of checking what will be put together - correlation matrix to see if variables are related
+plot(tide_data[,5], tide_data[,6], pch = 20, xlab = "Spring peak current speed (m/s)", 
+     ylab = "Neap peak current speed (m/s)", main = "Relationship between spring and neap peak current speeds")
+plot(tide_data[,1], tide_data[,2], pch = 20, xlab = "Spring tidal range (m)", 
+     ylab = "Neap tidal range (m)", main = "Relationship between spring and neap tidal ranges")
+plot(tide_data[,1], tide_data[,5], pch = 20, xlab = "Spring tidal range (m)", 
+     ylab = "Spring peak current spead (m/s)", main = "Relationship between spring tidal range and peak current speed")
+cor(tide_data[,c(1,2,5,6,9)])
+
+## Presence of marsh - yes/no if marsh is present in given set of conditions, i.e. probability of having
+## a zero value for marsh presence at given conditions.
+## Model will depend on wave fetch, tidal range, peak current speed, and northing (temp proxy).
+## Use only spring or neap range and peak current speed in model, as spring range is highly correlated 
+## with peak current speed, and the same for ranges. Possibly include sediment type, if data is obtainable.
+
+## Transform marsh into categorical variable - 1 if marsh is present at a given boundary point, 0 if not.
+marsh_cat <- sm_density
+marsh_cat[marsh_cat[] != 0] <- 1
+marshpresence_discrete <- cut(marsh_cat, breaks = 2)
+#Exploring the relationships
+boxplot(fetch_dist ~ marshpresence_discrete, notch = TRUE, outline = FALSE, 
+        names = c("No saltmarsh", "Saltmarsh"), xlab = "Presence of saltmarsh", 
+        ylab = "Wave fetch (kilometres)", main = "Relationship between wave fetch and saltmarsh presence")
+
+boxplot(tidal$Spring_Range ~ marshpresence_discrete, notch = TRUE, outline = FALSE,
+        names = c("No saltmarsh", "Saltmarsh"), xlab = "Presence of saltmarsh",
+        ylab = "Spring tidal range (metres)", 
+        main = "Relationship between tidal range and saltmarsh presence")
+
+boxplot(tidal$Spring_peakcurrentspeed ~ marshpresence_discrete, notch = TRUE, outline = FALSE,
+        names = c("No saltmarsh", "Saltmarsh"), xlab = "Presence of saltmarsh",
+        ylab = "Spring peak current speed (metres per second)",
+        main = "Relationship between peak current speeds and saltmarsh presence")
+
+boxplot(tidal$Northing ~ marshpresence_discrete, notch = TRUE, outline = FALSE,
+        names = c("No saltmarsh", "Saltmarsh"), xlab = "Presence of saltmarsh",
+        ylab = "Northing", main = "Relationship between northing and saltmarsh presence")
+
+#Concatenate data
+marsh_fitdata <- data.frame(cbind(marsh_cat, model_fetchdist, model_tiderange, model_tidecurrent, 
+                                  model_northing))
+colnames(marsh_fitdata) <- c("marsh_cat", "fetch", "tiderange", "current", "northing")
+
+#Run regression on different subsets of the data, both full model and calculating step models
+marsh_fit <- list()
+marsh_step <- list()
+for (i in 1:5000) {
+  marshsample <- sample_n(marsh_fitdata, 300, replace = FALSE)
+  marsh_fit[[i]] <- glm(marsh_cat ~ fetch + tiderange + current + northing, family = binomial,
+                        data = marshsample)
+  marsh_step[[i]] <- step(marsh_fit[[i]], direction = 'both', trace = 0)
+}
+
+#Obtain average model from all fitted models
+marsh_avgfit <- model.avg(marsh_fit)
+summary(marsh_avgfit)
+marsh_avgstepfit <- model.avg(marsh_step)
+summary(marsh_avgstepfit)
+
+#Get summaries of fitted full models
+marsh_summary <- lapply(marsh_fit, summary)
+
+#Extract significant parameter coefficients from all models - fetch and northing
+marsh_coef <- matrix(nrow = 5000, ncol = 2)
+for (i in 1:5000) {
+  marsh_coef[i,1] <- coef(marsh_summary[[i]])[2,1]
+  marsh_coef[i,2] <- coef(marsh_summary[[i]])[5,1]
+}
+colnames(marsh_coef) <- c("Fetch", "Northing")
+hist(marsh_coef[,1])
+hist(marsh_coef[,2])
+
+#Plot relationship between predictors and response variable
+scatter.smooth(marsh_fitdata$fetch, marsh_fitdata$marsh_cat, pch = 20, xlab = "Fetch (kilometres)",
+               ylab = "Presence of marsh", main = "Relationship between wave fetch and marsh presence")
+scatter.smooth(marsh_fitdata$northing, marsh_fitdata$marsh_cat, pch = 20, xlab = "Northing (metres)",
+               ylab = "Presence of marsh", main = "Relationship between northing and marsh presence")
+
+#Fit reduced model - significant parameters only
+marsh_redfit <- list()
+for (i in 1:5000) {
+  marshsample <- sample_n(marsh_fitdata, 300, replace = FALSE)
+  marsh_redfit[[i]] <- glm(marsh_cat ~ fetch + northing, family = binomial, data = marshsample)
+}
+
+#Obtain average model from all fitted reduced models
+marsh_avgredfit <- model.avg(marsh_redfit)
+summary(marsh_avgredfit)
+
+#Get summaries of fitted full models
+marshred_summary <- lapply(marsh_redfit, summary)
+
+#Extract significant parameter coefficients from all models - fetch and northing
+marshred_coef <- matrix(nrow = 5000, ncol = 2)
+for (i in 1:5000) {
+  marshred_coef[i,1] <- coef(marshred_summary[[i]])[2,1]
+  marshred_coef[i,2] <- coef(marshred_summary[[i]])[3,1]
+}
+colnames(marshred_coef) <- c("Fetch", "Northing")
+write.csv(marshred_coef, file = "marshpresencecoef.csv")
+
+## Final model: fetch + northing, parameter estimates fetch = -0.07960, p(1.7e-7), 
+## northing = 0.000004854, p(0.00314)
+
+## Plots: set variable fetch, constant northing - roughly median
+newdata = data.frame(fetch = xfetch, northing = 400000) 
+marsh_pred <- predict(marsh_avgredfit, newdata, type = 'response')
+write.csv(marsh_pred, file = "marsh_pred400000.csv")
+plot(xfetch, marsh_pred, pch = 20, xlab = "Fetch distance (km)", ylab = "Probability of finding saltmarsh",
+     main = "Probability of finding saltmarsh at \n400000 northing and variable fetch distances")
+
+newdata = data.frame(fetch = 10, northing = xnorthing) 
+marsh_pred <- predict(marsh_avgredfit, newdata, type = 'response')
+write.csv(marsh_pred, file = "marsh_predfetch10.csv")
+plot(xnorthing, marsh_pred, pch = 20, xlab = "Northing (m)", ylab = "Probability of finding saltmarsh",
+     main = "Probability of finding saltmarsh at \n10 km wave fetch and variable northing")
+
+#Plot smoothed variables
+marshbigsample <- sample_n(marsh_fitdata, 5000, replace = FALSE)
+marsh_fit_gam <- gam(marsh_cat ~ s(fetch, k = 4, fx = TRUE) + s(northing, k = 4, fx = TRUE), 
+                     family = binomial, data = marshbigsample)
+summary(marsh_fit_gam)
+marsh_fit_gam
+plot(marsh_fit_gam, shade = TRUE, xlab = "Wave fetch (km)", ylab = "Smoothed fetch", 
+     main = "Pattern of contribution to \nfitted values by wave fetch")
+
+plot(marsh_fit_gam, shade = TRUE, xlab = "Northing (m)", ylab = "Smoothed Northing", 
+     main = "Pattern of contribution to \nfitted values by northing")
+
+####################################################################
+## Regression - presence of mudflat
+####################################################################
+
+## Presence of mudflat - yes/no if mudflat is present in given set of conditions, i.e. probability 
+## of having a zero value for mudflat presence at given conditions. Model will depend on wave fetch, 
+## tidal range, peak current speed, and possibly Northings (temp proxy). Use only spring or neap range 
+## and peak current speed in model, as spring range is highly correlated with peak current speed, and 
+## the same for ranges. Possibly include sediment type, if data is obtainable.
+
+## Transform mudflat into categorical variable - 1 if present at a given boundary point, 0 if not.
+flat_cat <- mf_density
+flat_cat[flat_cat[] != 0] <- 1
+flatpresence_discrete <- cut(flat_cat, breaks = 2)
+#Explore relationships
+boxplot(fetch_dist ~ flatpresence_discrete, notch = TRUE, outline = FALSE, 
+        names = c("No mudflat", "Mudflat"), xlab = "Presence of mudflat", 
+        ylab = "Wave fetch (kilometres)", main = "Relationship between wave fetch and mudflat presence")
+
+boxplot(tidal$Spring_Range ~ flatpresence_discrete, notch = TRUE, outline = FALSE,
+        names = c("No mudflat", "Mudflat"), xlab = "Presence of mudflat",
+        ylab = "Spring tidal range (metres)", 
+        main = "Relationship between tidal range and mudflat presence")
+
+boxplot(tidal$Spring_peakcurrentspeed ~ flatpresence_discrete, notch = TRUE, outline = FALSE,
+        names = c("No mudflat", "Mudflat"), xlab = "Presence of mudflat",
+        ylab = "Spring peak current speed (metres per second)",
+        main = "Relationship between peak current speeds and mudflat presence")
+
+boxplot(tidal$Northing ~ flatpresence_discrete, notch = TRUE, outline = FALSE,
+        names = c("No mudflat", "Mudflat"), xlab = "Presence of mudflat",
+        ylab = "Northing", main = "Relationship between northing and mudflat presence")
+
+#Concatenate data
+flat_fitdata <- data.frame(cbind(flat_cat, model_fetchdist, model_tiderange, model_tidecurrent, 
+                                 model_northing, sm_dist))
+colnames(flat_fitdata) <- c("flat_cat", "fetch", "tiderange", "current", "northing", "marshdist")
+
+#Run regression on different subsets of the data, both full model and calculating step models
+flat_fit <- list()
+flat_step <- list()
+for (i in 1:5000) {
+  flatsample <- sample_n(flat_fitdata, 300, replace = FALSE)
+  flat_fit[[i]] <- glm(flat_cat ~ fetch + tiderange + current + northing, family = binomial, 
+                       data = flatsample)
+  flat_step[[i]] <- step(flat_fit[[i]], direction = 'both', trace = 0)
+}
+
+#Obtain average model from all fitted models
+flat_avgfit <- model.avg(flat_fit)
+summary(flat_avgfit)
+flat_avgstep <- model.avg(flat_step)
+summary(flat_avgstep)
+
+#Get summaries of fitted full models
+flat_summary <- lapply(flat_fit, summary)
+
+#Extract significant parameter coefficients from all models - fetch, tiderange and northing
+flat_coef <- matrix(nrow = 5000, ncol = 3)
+for (i in 1:5000) {
+  flat_coef[i,1] <- coef(flat_summary[[i]])[2,1]
+  flat_coef[i,2] <- coef(flat_summary[[i]])[3,1]
+  flat_coef[i,3] <- coef(flat_summary[[i]])[5,1]
+}
+colnames(flat_coef) <- c("fetch", "tiderange", "northing")
+hist(flat_coef[,1])
+hist(flat_coef[,2])
+hist(flat_coef[,3])
+
+#Plot relationship between predictors and response variable
+scatter.smooth(flat_fitdata$fetch, flat_fitdata$flat_cat, pch = 20, xlab = "Fetch (kilometres)",
+               ylab = "Presence of mudflat", main = "Relationship between wave fetch and mudflat presence")
+scatter.smooth(flat_fitdata$tiderange, flat_fitdata$flat_cat, pch = 20, xlab = "Spring tidal range (metres)",
+               ylab = "Presence of mudflat", main = "Relationship between spring tidal range and mudflat presence")
+scatter.smooth(flat_fitdata$northing, flat_fitdata$flat_cat, pch = 20, xlab = "Northing (metres)",
+               ylab = "Presence of mudflat", main = "Relationship between northing and mudflat presence")
+
+#Fit reduced model - significant parameters only
+flat_redfit <- list()
+for (i in 1:5000) {
+  flatsample <- sample_n(flat_fitdata, 300, replace = FALSE)
+  flat_redfit[[i]] <- glm(flat_cat ~ fetch + tiderange + northing, family = binomial, data = flatsample)
+}
+
+#Obtain average model from all fitted reduced models
+flat_avgredfit <- model.avg(flat_redfit)
+summary(flat_avgredfit)
+
+#Get summaries of fitted full models
+flatred_summary <- lapply(flat_redfit, summary)
+
+#Extract significant parameter coefficients from all models - 
+flatred_coef <- matrix(nrow = 5000, ncol = 3)
+for (i in 1:5000) {
+  flatred_coef[i,1] <- coef(flatred_summary[[i]])[2,1]
+  flatred_coef[i,2] <- coef(flatred_summary[[i]])[3,1]
+  flatred_coef[i,3] <- coef(flatred_summary[[i]])[4,1]
+}
+colnames(flatred_coef) <- c("fetch", "tiderange", "northing")
+hist(flatred_coef[,1])
+hist(flatred_coef[,2])
+hist(flatred_coef[,3])
+write.csv(flatred_coef, file = "mudflatpresencecoef.csv")
+
+## Final model: fetch + tiderange + northing, parameter estimates fetch = -0.06782, p(8.55e-7),
+## tiderange = -0.2458, p(0.000116), northing = -0.000003612, p(0.001353), intercept = 3.077, p(3.89e-8)
+
+#Plots: set variable fetch, constant tide range and northing
+newdata = data.frame(fetch = xfetch, northing = 400000, tiderange = 5) 
+flat_pred <- predict(flat_avgredfit, newdata, type = 'response')
+write.csv(flat_pred, file = "flat_predfetch.csv")
+plot(xfetch, flat_pred, pch = 20, xlab = "Fetch distance (km)", ylab = "Probability of finding mudflat",
+     main = "Probability of finding mudflat at \n400000 northing, 5 m tiderange \nand variable fetch distances")
+
+newdata = data.frame(fetch = 10, northing = xnorthing, tiderange = 5) 
+flat_pred <- predict(flat_avgredfit, newdata, type = 'response')
+write.csv(flat_pred, file = "flat_prednorthing.csv")
+plot(xnorthing, flat_pred, pch = 20, xlab = "Northing (m)", ylab = "Probability of finding mudflat",
+     main = "Probability of finding mudflat at \n10 km wave fetch, 5 m tiderange \nand variable northing")
+
+newdata = data.frame(fetch = 10, northing = 400000, tiderange = xrange) 
+flat_pred <- predict(flat_avgredfit, newdata, type = 'response')
+write.csv(flat_pred, file = "flat_predtiderange.csv")
+plot(xrange, flat_pred, pch = 20, xlab = "Spring tidal range (m)", ylab = "Probability of finding mudflat",
+     main = "Probability of finding mudflat at \n10 km wave fetch, 400000 northing \nand variable tide range")
+
+#Plot smoothed predictors
+flatbigsample <- sample_n(flat_fitdata, 5000, replace = FALSE)
+flat_fit_gam <- gam(flat_cat ~ s(fetch, k = 4, fx = TRUE) + s(tiderange, k = 4, fx = TRUE) +
+                      s(northing, k = 4, fx = TRUE), 
+                    family = binomial, data = flatbigsample)
+summary(flat_fit_gam)
+flat_fit_gam
+
+plot(flat_fit_gam, shade = TRUE, xlab = "Wave fetch (km)", ylab = "Smoothed wave fetch", 
+     main = "Pattern of contribution to \nfitted values by wave fetch")
+plot(flat_fit_gam, shade = TRUE, xlab = "Spring tidal range (m)", ylab = "Smoothed spring tidal range", 
+     main = "Pattern of contribution to \nfitted values by spring tidal range")
+plot(flat_fit_gam, shade = TRUE, xlab = "Northing (m)", ylab = "Smoothed Northing", 
+     main = "Pattern of contribution to \nfitted values by northing")
+
+####################################################################
+## Regression - presence of mid-low zonation type
+####################################################################
+
+## Presence of zonation types - yes/no if zone is present in given set of conditions, i.e. probability of 
+## having a zero value for zone presence at given conditions.
+## Model will depend on wave fetch, tidal range, peak current speed, and possibly Northings (temp proxy).
+## Use only spring or neap range and peak current speed in model, as spring range is highly correlated 
+## with peak current speed, and the same for ranges. Possibly include sediment type, if data is obtainable.
+
+## Transform zones into categorical variable - 1 if zone is present at a given boundary point, 0 if not.
+ml_cat <- ml_density
+ml_cat[ml_cat[] != 0] <- 1
+mlpresence_discrete <- cut(ml_cat, breaks = 2)
+#Explore relationships
+boxplot(tidal$Spring_Range ~ mlpresence_discrete, notch = TRUE, outline = FALSE,
+        names = c("No mid-low marsh", "Mid-low marsh"), xlab = "Presence of mid-low saltmarsh",
+        ylab = "Spring tidal range (metres)", 
+        main = "Relationship between tidal range and mid-low saltmarsh presence")
+
+boxplot(tidal$Northing ~ mlpresence_discrete, notch = TRUE, outline = FALSE,
+        names = c("No mid-low marsh", "Mid-low marsh"), xlab = "Presence of mid-low saltmarsh",
+        ylab = "Northing", main = "Relationship between northing and mid-low saltmarsh presence")
+
+boxplot(sm_density ~ mlpresence_discrete, notch = TRUE, outline = FALSE,
+        names = c("No mid-low marsh", "Mid-low marsh"), xlab = "Presence of mid-low saltmarsh",
+        ylab = "Saltmarsh density", main = "Relationship between saltmarsh density and mid-low saltmarsh presence")
+
+#Concatenate data
+ml_fitdata <- data.frame(cbind(ml_cat, model_fetchdist, model_tiderange, model_tidecurrent,
+                               model_northing, sm_density))
+colnames(ml_fitdata) <- c("ml_cat", "fetch", "tiderange", "current", "northing", "marsh_density")
+
+#Run regression on different subsets of the data, both full model and calculating step models
+ml_fit <- list()
+ml_step <- list()
+for (i in 1:5000) {
+  mlsample <- sample_n(ml_fitdata, 300, replace = FALSE)
+  ml_fit[[i]] <- glm(ml_cat ~ fetch + tiderange + current + northing + marsh_density, family = binomial,
+                     data = mlsample)
+  ml_step[[i]] <- step(ml_fit[[i]], direction = 'both', trace = 0)
+}
+
+#Obtain average model from all fitted models
+ml_avgfit <- model.avg(ml_fit)
+summary(ml_avgfit)
+ml_avgstep <- model.avg(ml_step)
+summary(ml_avgstep)
+
+#Get summaries of fitted full models
+ml_summary <- lapply(ml_fit, summary)
+
+#Extract significant parameter coefficients from all models - 
+ml_coef <- matrix(nrow = 5000, ncol = 3)
+for (i in 1:5000) {
+  ml_coef[i,1] <- coef(ml_summary[[i]])[3,1]
+  ml_coef[i,2] <- coef(ml_summary[[i]])[5,1]
+  ml_coef[i,3] <- coef(ml_summary[[i]])[6,1]
+}
+colnames(ml_coef) <- c("tiderange", "northing", "marsh_density")
+hist(ml_coef[,1])
+hist(ml_coef[,2])
+hist(ml_coef[,3])
+
+#Plot relationship between predictors and response variable
+scatter.smooth(ml_fitdata$tiderange, ml_fitdata$ml_cat, pch = 20, xlab = "Spring tide range (metres)",
+               ylab = "Presence of mid-low marsh", 
+               main = "Relationship between spring tidal range and mid-low marsh presence")
+scatter.smooth(ml_fitdata$northing, ml_fitdata$ml_cat, pch = 20, xlab = "Northing (metres)",
+               ylab = "Presence of mid-low marsh", 
+               main = "Relationship between northing and mid-low marsh presence")
+scatter.smooth(ml_fitdata$marsh_density, ml_fitdata$ml_cat, pch = 20, xlab = "Saltmarsh density",
+               ylab = "Presence of mid-low marsh", 
+               main = "Relationship between saltmarsh density and mid-low marsh presence")
+
+#Fit reduced model - significant parameters only
+ml_redfit <- list()
+for (i in 1:5000) {
+  mlsample <- sample_n(ml_fitdata, 300, replace = FALSE)
+  ml_redfit[[i]] <- glm(ml_cat ~ tiderange + northing + marsh_density, family = binomial, data = mlsample)
+}
+
+#Obtain average model from all fitted reduced models
+ml_avgredfit <- model.avg(ml_redfit)
+summary(ml_avgredfit)
+
+#Get summaries of fitted full models
+mlred_summary <- lapply(ml_redfit, summary)
+
+#Extract significant parameter coefficients from all models
+mlred_coef <- matrix(nrow = 5000, ncol = 3)
+for (i in 1:5000) {
+  mlred_coef[i,1] <- coef(mlred_summary[[i]])[2,1]
+  mlred_coef[i,2] <- coef(mlred_summary[[i]])[3,1]
+  mlred_coef[i,3] <- coef(mlred_summary[[i]])[4,1]
+}
+colnames(mlred_coef) <- c("tiderange", "northing", "marsh_density")
+hist(mlred_coef[,1])
+hist(mlred_coef[,2])
+hist(mlred_coef[,3])
+write.csv(mlred_coef, file = "MLpresencecoef.csv")
+
+## Final model: tiderange + northing + marsh_density, parameter estimates tiderange = -0.2596 p(.000636),
+## northing = 0.000006912 p(<2e-16), marsh_density = 9.344 p(0.003007)
+
+#Plots: set variable parameters and hold others constant
+newdata = data.frame(tiderange = xrange, northing = 400000, marsh_density = 0.2)
+ml_pred <- predict(ml_avgredfit, newdata, type = 'response')
+write.csv(ml_pred, file = "ml_predtiderange.csv")
+plot(xrange, ml_pred, pch = 20, xlab = "Spring tide range (m)", ylab = "Probability of finding mid-low saltmarsh",
+     main = "Probability of finding mid-low saltmarsh at \n400000 northing, saltmarsh density 0.2 \nand variable spring tidal range")
+
+newdata = data.frame(tiderange = 4, northing = xnorthing, marsh_density = 0.2)
+ml_pred <- predict(ml_avgredfit, newdata, type = 'response')
+write.csv(ml_pred, file = "ml_prednorthing.csv")
+plot(xnorthing, ml_pred, pch = 20, xlab = "Northing (m)", ylab = "Probability of finding mid-low saltmarsh",
+     main = "Probability of finding mid-low saltmarsh at \nsaltmarsh density 0.2, spring tide range 4 m \nand variable northing")
+
+newdata = data.frame(tiderange = 4, northing = 400000, marsh_density = xsmdensity)
+ml_pred <- predict(ml_avgredfit, newdata, type = 'response')
+write.csv(ml_pred, file = "ml_predtiderange.csv")
+plot(xsmdensity, ml_pred, pch = 20, xlab = "Saltmarsh density", ylab = "Probability of finding mid-low saltmarsh",
+     main = "Probability of finding mid-low saltmarsh at \n400000 northing, spring tide range 4 m \nand variable saltmarsh density")
+
+#Plot smoothed predictors
+mlbigsample <- sample_n(ml_fitdata, 5000, replace = FALSE)
+ml_fit_gam <- gam(ml_cat ~ s(tiderange, k = 4, fx = TRUE) + s(northing, k = 4, fx = TRUE) + 
+                    s(marsh_density, k = 4, fx = TRUE), family = binomial,
+                  data = mlbigsample)
+summary(ml_fit_gam)
+ml_fit_gam
+
+plot(ml_fit_gam, shade = TRUE, xlab = "Spring tidal range (m)", ylab = "Smoothed spring tidal range",
+     main = "Pattern of contribution to \nfitted values by spring tidal range")
+plot(ml_fit_gam, shade = TRUE, xlab = "Northing (m)", ylab = "Smoothed northing",
+     main = "Pattern of contribution to \nfitted values by northing")
+plot(ml_fit_gam, shade = TRUE, xlab = "Saltmarsh density", ylab = "Smoothed saltmarsh density",
+     main = "Pattern of contribution to \nfitted values by saltmarsh density")
+
+
+####################################################################
+## Regression - presence of pioneer zonation type
+####################################################################
+
+## Presence of zonation types - yes/no if zone is present in given set of conditions, i.e. probability of 
+## having a zero value for zone presence at given conditions.
+## Model will depend on wave fetch, tidal range, peak current speed, and possibly Northings (temp proxy).
+## Use only spring or neap range and peak current speed in model, as spring range is highly correlated 
+## with peak current speed, and the same for ranges. Possibly include sediment type, if data is obtainable.
+
+## Transform zones into categorical variable - 1 if zone is present at a given boundary point, 0 if not.
+p_cat <- p_density
+p_cat[p_cat[] != 0] <- 1
+ppresence_discrete <- cut(p_cat, breaks = 2)
+#Explore relationships
+boxplot(fetch_dist ~ ppresence_discrete, notch = TRUE, outline = FALSE, 
+        names = c("No pioneer marsh", "Pioneer marsh"), xlab = "Presence of pioneer saltmarsh", 
+        ylab = "Wave fetch (kilometres)", main = "Relationship between wave fetch and pioneer saltmarsh presence")
+
+boxplot(tidal$Spring_Range ~ ppresence_discrete, notch = TRUE, outline = FALSE,
+        names = c("No pioneer marsh", "Pioneer marsh"), xlab = "Presence of pioneer saltmarsh",
+        ylab = "Spring tidal range (metres)", 
+        main = "Relationship between tidal range and pioneer saltmarsh presence")
+
+boxplot(tidal$Northing ~ ppresence_discrete, notch = TRUE, outline = FALSE,
+        names = c("No pioneer marsh", "Pioneer marsh"), xlab = "Presence of pioneer saltmarsh",
+        ylab = "Northing", main = "Relationship between northing and pioneer saltmarsh presence")
+
+boxplot(sm_density ~ ppresence_discrete, notch = TRUE, outline = FALSE,
+        names = c("No pioneer marsh", "Pioneer marsh"), xlab = "Presence of pioneer saltmarsh",
+        ylab = "Saltmarsh density", main = "Relationship between saltmarsh density and pioneer saltmarsh presence")
+
+#Concatenate data
+p_fitdata <- data.frame(cbind(p_cat, model_fetchdist, model_tiderange, model_tidecurrent,
+                              model_northing, sm_density))
+colnames(p_fitdata) <- c("p_cat", "fetch", "tiderange", "current", "northing", "marsh_density")
+
+#Run regression on different subsets of the data, both full model and calculating step models
+p_fit <- list()
+p_step <- list()
+for (i in 1:5000) {
+  psample <- sample_n(p_fitdata, 300, replace = FALSE)
+  p_fit[[i]] <- glm(p_cat ~ fetch + tiderange + current + northing + marsh_density, family = binomial,
+                    data = psample)
+  p_step[[i]] <- step(p_fit[[i]], direction = 'both', trace = 0)
+}
+
+#Obtain average model from all fitted models
+p_avgfit <- model.avg(p_fit)
+summary(p_avgfit)
+p_avgstep <- model.avg(p_step)
+summary(p_avgstep)
+
+#Get summaries of fitted full models
+p_summary <- lapply(p_fit, summary)
+
+#Extract significant parameter coefficients from all models - fetch, tide range, northing, marsh density
+p_coef <- matrix(nrow = 5000, ncol = 4)
+for (i in 1:5000) {
+  p_coef[i,1] <- coef(p_summary[[i]])[2,1]
+  p_coef[i,2] <- coef(p_summary[[i]])[3,1]
+  p_coef[i,3] <- coef(p_summary[[i]])[5,1]
+  p_coef[i,4] <- coef(p_summary[[i]])[6,1]
+}
+colnames(p_coef) <- c("fetch", "tiderange", "northing", "marsh density")
+hist(p_coef[,1])
+hist(p_coef[,2])
+hist(p_coef[,3])
+hist(p_coef[,4])
+
+#Plot relationship between predictors and response variable
+scatter.smooth(p_fitdata$fetch, p_fitdata$p_cat, pch = 20, xlab = "Wave fetch (km)",
+               ylab = "Presence of pioneer marsh", 
+               main = "Relationship between wave fetch and pioneer marsh presence")
+scatter.smooth(p_fitdata$tiderange, p_fitdata$p_cat, pch = 20, xlab = "Spring tide range (metres)",
+               ylab = "Presence of pioneer marsh", 
+               main = "Relationship between spring tidal range and pioneer marsh presence")
+scatter.smooth(p_fitdata$northing, p_fitdata$p_cat, pch = 20, xlab = "Northing (metres)",
+               ylab = "Presence of pioneer marsh", 
+               main = "Relationship between northing and pioneer marsh presence")
+scatter.smooth(p_fitdata$marsh_density, p_fitdata$p_cat, pch = 20, xlab = "Saltmarsh density",
+               ylab = "Presence of pioneer marsh", 
+               main = "Relationship between saltmarsh density and pioneer marsh presence")
+
+#Fit reduced model - significant parameters only
+p_redfit <- list()
+for (i in 1:5000) {
+  psample <- sample_n(p_fitdata, 300, replace = FALSE)
+  p_redfit[[i]] <- glm(p_cat ~ fetch + tiderange + northing + marsh_density, family = binomial,
+                       data = psample)
+}
+
+#Obtain average model from all fitted reduced models
+p_avgredfit <- model.avg(p_redfit)
+summary(p_avgredfit)
+
+#Get summaries of fitted full models
+pred_summary <- lapply(p_redfit, summary)
+
+#Extract significant parameter coefficients from all models - fetch, tide range, northing, marsh density
+pred_coef <- matrix(nrow = 5000, ncol = 4)
+for (i in 1:5000) {
+  pred_coef[i,1] <- coef(pred_summary[[i]])[2,1]
+  pred_coef[i,2] <- coef(pred_summary[[i]])[3,1]
+  pred_coef[i,3] <- coef(pred_summary[[i]])[4,1]
+  pred_coef[i,4] <- coef(pred_summary[[i]])[5,1]
+}
+colnames(pred_coef) <- c("fetch", "tiderange", "northing", "marsh density")
+hist(pred_coef[,1])
+hist(pred_coef[,2])
+hist(pred_coef[,3])
+hist(pred_coef[,4])
+
+## Final model: fetch + tiderange + northing + marsh density, parameter estimates
+## fetch = 0.03104 p(4.72e-6), tiderange = -0.4778 p(2.e-6), northing = 0.000005162 p(6.21e-5),
+## marsh density = 5.037 p(6.69e-6)
+
+## Plots: set variable parameters and hold others constant
+newdata = data.frame(tiderange = 4, fetch = xfetch, northing = 400000, marsh_density = 0.2) 
+p_pred <- predict(p_avgredfit, newdata, type = 'response')
+write.csv(p_pred, file = "p_predfetch.csv")
+plot(xfetch, p_pred, pch = 20, xlab = "Wave fetch (km)", ylab = "Probability of finding pioneer saltmarsh",
+     main = "Probability of finding pioneer saltmarsh at \nspring tidal range 4 m, 400000 northing, \nsaltmarsh density 0.2 and variable wave fetch (km)")
+
+newdata = data.frame(tiderange = xrange, fetch = 5, northing = 400000, marsh_density = 0.2)
+p_pred <- predict(p_avgredfit, newdata, type = 'response')
+write.csv(p_pred, file = "p_predtiderange.csv")
+plot(xrange, p_pred, pch = 20, xlab = "Spring tidal range (m)", ylab = "Probability of finding pioneer saltmarsh",
+     main = "Probability of finding pioneer saltmarsh at \nwave fetch 5 km, 400000 northing, \nsaltmarsh density 0.2 and variable spring tidal range (m)")
+
+newdata = data.frame(tiderange = 4, fetch = 5, northing = xnorthing, marsh_density = 0.2) 
+p_pred <- predict(p_avgredfit, newdata, type = 'response')
+write.csv(p_pred, file = "p_prednorthing.csv")
+plot(xnorthing, p_pred, pch = 20, xlab = "Northing (m)", ylab = "Probability of finding pioneer saltmarsh",
+     main = "Probability of finding pioneer saltmarsh at \nspring tidal range 4m, wave fetch 5 km, \nsaltmarsh density 0.2 and variable northing")
+
+newdata = data.frame(tiderange = 4, fetch = 5, northing = 400000, marsh_density = xsmdensity) 
+p_pred <- predict(p_avgredfit, newdata, type = 'response')
+write.csv(p_pred, file = "p_predsmdensity.csv")
+plot(xsmdensity, p_pred, pch = 20, xlab = "Saltmarsh density", ylab = "Probability of finding pioneer saltmarsh",
+     main = "Probability of finding pioneer saltmarsh at \nspring tidal range 4m, wave fetch 5 km, \n400000 northing and variable saltmarsh density")
+
+#Plot smoothed variables
+pbigsample <- sample_n(p_fitdata, 5000, replace = FALSE)
+p_fit_gam <- gam(p_cat ~ s(fetch, k = 4, fx = TRUE) + s(tiderange, k = 4, fx = TRUE) + 
+                   s(northing, k = 4, fx = TRUE) + s(marsh_density, k = 4, fx = TRUE), family = binomial, 
+                 data = pbigsample)
+summary(p_fit_gam)
+p_fit_gam
+
+plot(p_fit_gam, shade = TRUE, xlab = "Wave fetch (km)", ylab = "Smoothed wave fetch",
+     main = "Pattern of contribution to fitted \nvalues by wave fetch")
+
+plot(p_fit_gam, shade = TRUE, xlab = "Spring tidal range (m)", ylab = "Smoothed spring tidal range",
+     main = "Pattern of contribution to \nfitted values by spring tidal range")
+
+plot(p_fit_gam, shade = TRUE, xlab = "Northing (m)", ylab = "Smoothed northing",
+     main = "Pattern of contribution to \nfitted values by northing")
+
+plot(p_fit_gam, shade = TRUE, xlab = "Saltmarsh density", ylab = "Smoothed saltmarsh density",
+     main = "Pattern of contribution to \nfitted values by saltmarsh density")
+
+####################################################################
+## Regression - presence of reedbeds zonation type
+####################################################################
+
+## Presence of zonation types - yes/no if zone is present in given set of conditions, i.e. probability of 
+## having a zero value for zone presence at given conditions.
+## Model will depend on wave fetch, tidal range, peak current speed, and possibly Northings (temp proxy).
+## Use only spring or neap range and peak current speed in model, as spring range is highly correlated 
+## with peak current speed, and the same for ranges. Possibly include sediment type, if data is obtainable.
+
+## Transform zones into categorical variable - 1 if zone is present at a given boundary point, 0 if not.
+r_cat <- r_density
+r_cat[r_cat[] != 0] <- 1
+rpresence_discrete <- cut(r_cat, breaks = 2)
+#Explore relationships
+boxplot(tidal$Spring_Range ~ rpresence_discrete, notch = TRUE, outline = FALSE,
+        names = c("No reedbeds", "Reedbeds"), xlab = "Presence of reedbeds",
+        ylab = "Spring tidal range (metres)", 
+        main = "Relationship between tidal range and reedbeds presence")
+
+#Concatenate data
+r_fitdata <- data.frame(cbind(r_cat, model_fetchdist, model_tiderange, model_tidecurrent,
+                              model_northing, sm_density))
+colnames(r_fitdata) <- c("r_cat", "fetch", "tiderange", "current", "northing", "marsh_density")
+
+#Run regression on different subsets of the data, both full model and calculating step models
+r_fit <- list()
+r_step <- list()
+for (i in 1:5000) {
+  rsample <- sample_n(r_fitdata, 300, replace = FALSE)
+  r_fit[[i]] <- glm(r_cat ~ fetch + tiderange + current + northing + marsh_density, family = binomial,
+                    data = rsample)
+  r_step[[i]] <- step(r_fit[[i]], direction = 'both', trace = 0)
+}
+
+#Obtain average model  from all fitted models
+r_avgfit <- model.avg(r_fit)
+summary(r_avgfit)
+#r_avgstep <- model.avg(r_step)
+#summary(r_avgstep)
+
+#Get summaries of fitted full models
+r_summary <- lapply(r_fit, summary)
+
+#Extract significant parameter coefficients from all models - spring tide range
+r_coef <- matrix(nrow = 5000, ncol = 1)
+for (i in 1:5000) {
+  r_coef[i] <- coef(r_summary[[i]])[3,1]
+}
+colnames(r_coef) <- c("tiderange")
+hist(r_coef)
+
+#Plot relationship between predictors and response variables
+scatter.smooth(r_fitdata$tiderange, r_fitdata$r_cat, pch = 20, xlab = "Spring tide range (metres)",
+               ylab = "Presence of reedbeds", 
+               main = "Relationship between spring tidal range and reedbed presence")
+
+#Fit reduced model - significant parameters only
+r_redfit <- list()
+for (i in 1:5000) {
+  rsample <- sample_n(r_fitdata, 300, replace = FALSE)
+  r_redfit[[i]] <- glm(r_cat ~ tiderange, family = binomial, data = rsample)
+}
+
+#Obtain average model from all fitted reduced models
+r_avgredfit <- model.avg(r_redfit)
+summary(r_avgredfit)
+
+#Get summaries of fitted full models
+rred_summary <- lapply(r_redfit, summary)
+
+#Extract significant parameter coefficients from all models - spring tide range
+rred_coef <- matrix(nrow = 5000, ncol = 1)
+for (i in 1:5000) {
+  rred_coef[i] <- coef(rred_summary[[i]])[2,1]
+}
+colnames(rred_coef) <- c("tiderange")
+hist(rred_coef)
+
+## Final model: tiderange, parameter estimates tiderange = -0.3587 p(0.0114)
+
+## Plots: set variable parameters and hold others constant
+newdata = data.frame(tiderange = xrange)
+r_pred <- predict(r_avgredfit, newdata, type = 'response')
+write.csv(r_pred, file = "r_predtiderange.csv")
+plot(xrange, r_pred, pch = 20, xlab = "Spring tidal range (m)", ylab = "Probability of finding reedbeds",
+     main = "Probability of finding reedbeds at variable spring tidal ranges")
+
+#Plot smoothed relationships
+rbigsample <- sample_n(r_fitdata, 5000, replace = FALSE)
+r_fit_gam <- gam(r_cat ~ s(tiderange, k = 4, fx = TRUE), family = binomial, data = rbigsample)
+summary(r_fit_gam)
+r_fit_gam
+
+plot(r_fit_gam, shade = TRUE, xlab = "Spring tidal range (m)", ylab = "Smoothed spring tidal range",
+     main = "Pattern of contribution to \nfitted values by spring tidal range")
+
+####################################################################
+## Regression - presence of spartina zonation type
+####################################################################
+
+## Presence of zonation types - yes/no if zone is present in given set of conditions, i.e. probability of 
+## having a zero value for zone presence at given conditions.
+## Model will depend on wave fetch, tidal range, peak current speed, and possibly Northings (temp proxy).
+## Use only spring or neap range and peak current speed in model, as spring range is highly correlated 
+## with peak current speed, and the same for ranges. Possibly include sediment type, if data is obtainable.
+
+## Transform zones into categorical variable - 1 if zone is present at a given boundary point, 0 if not.
+s_cat <- s_density
+s_cat[s_cat[] != 0] <- 1
+spresence_discrete <- cut(s_cat, breaks = 2)
+#Explore relationships
+boxplot(sm_density ~ spresence_discrete, notch = TRUE, outline = FALSE,
+        names = c("No Spartina marsh", "Spartina marsh"), xlab = "Presence of Spartina saltmarsh",
+        ylab = "Saltmarsh density", main = "Relationship between saltmarsh density and Spartina saltmarsh presence")
+
+#Concatenate data
+s_fitdata <- data.frame(cbind(s_cat, model_fetchdist, model_tiderange, model_tidecurrent,
+                              model_northing, sm_density))
+colnames(s_fitdata) <- c("s_cat", "fetch", "tiderange", "current", "northing", "marsh_density")
+
+#Run regression on different subsets of the data, both full model and calculating step models
+s_fit <- list()
+s_step <- list()
+for (i in 1:5000) {
+  ssample <- sample_n(s_fitdata, 300, replace = FALSE)
+  s_fit[[i]] <- glm(s_cat ~ fetch + tiderange + current + northing + marsh_density, family = binomial,
+                    data = ssample)
+  s_step[[i]] <- step(s_fit[[i]], direction = 'both', trace = 0)
+}
+
+#Obtain average model from all fitted models
+s_avgfit <- model.avg(s_fit)
+summary(s_avgfit)
+#s_avgstep <- model.avg(s_step)
+#summary(s_avgstep)
+
+#Get summaries of fitted full models
+s_summary <- lapply(s_fit, summary)
+
+#Extract significant parameter coefficients from all models - spring tide range
+s_coef <- matrix(nrow = 5000, ncol = 1)
+for (i in 1:5000) {
+  s_coef[i] <- coef(s_summary[[i]])[6,1]
+}
+colnames(s_coef) <- c("marsh_density")
+hist(s_coef)
+
+#Plot relationship between predictors and response variables
+scatter.smooth(s_fitdata$marsh_density, s_fitdata$s_cat, pch = 20, xlab = "Saltmarsh density",
+               ylab = "Presence of Spartina marsh", 
+               main = "Relationship between saltmarsh density and Spartina marsh presence")
+
+#Fit reduced model - significant parameters only
+s_redfit <- list()
+for (i in 1:5000) {
+  ssample <- sample_n(s_fitdata, 300, replace = FALSE)
+  s_redfit[[i]] <- glm(s_cat ~ marsh_density, family = binomial, data = ssample)
+}
+
+#Obtain average model from all fitted reduced models
+s_avgredfit <- model.avg(s_redfit)
+summary(s_avgredfit)
+
+#Get summaries of fitted full models
+sred_summary <- lapply(s_redfit, summary)
+
+#Extract significant parameter coefficients from all models - spring tide range
+sred_coef <- matrix(nrow = 5000, ncol = 1)
+for (i in 1:5000) {
+  sred_coef[i] <- coef(sred_summary[[i]])[2,1]
+}
+colnames(sred_coef) <- c("marsh_density")
+hist(sred_coef)
+
+## Final model: marsh density (and intercept), parameter estimates marsh density = 8.7103 p(6.3e-7),
+## intercept = -0.7407 p(4.78e-7)
+
+## Plots: set variable parameters and hold others constant
+newdata = data.frame(marsh_density = xsmdensity)
+s_pred <- predict(s_avgredfit, newdata, type = 'response')
+write.csv(s_pred, file = "s_predsmdensity.csv")
+s_pred <- read.csv("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/Regression results/s_predsmdensity.csv")
+s_pred <- as.numeric(unlist(s_pred))
+
+plot(xsmdensity, s_pred, pch = 20, xlab = "Saltmarsh density", ylab = "Probability of finding Spartina marsh",
+     main = "Probability of finding Spartina marsh at variable saltmarsh density")
+
+#Plot smoothed variables
+sbigsample <- sample_n(s_fitdata, 5000, replace = FALSE)
+s_fit_gam <- gam(s_cat ~ s(marsh_density, k = 4, fx = TRUE), family = binomial, data = sbigsample)
+summary(s_fit_gam)
+s_fit_gam
+
+plot(s_fit_gam, shade = TRUE, xlab = "Saltmarsh density", ylab = "Smoothed saltmarsh density",
+     main = "Pattern of contribution to \nfitted values by saltmarsh density")
+
+####################################################################
+## Regression - presence of upper marsh zonation type
+####################################################################
+
+## Presence of zonation types - yes/no if zone is present in given set of conditions, i.e. probability of 
+## having a zero value for zone presence at given conditions.
+## Model will depend on wave fetch, tidal range, peak current speed, and possibly Northings (temp proxy).
+## Use only spring or neap range and peak current speed in model, as spring range is highly correlated 
+## with peak current speed, and the same for ranges. Possibly include sediment type, if data is obtainable.
+
+## Transform zones into categorical variable - 1 if zone is present at a given boundary point, 0 if not.
+u_cat <- u_density
+u_cat[u_cat[] != 0] <- 1
+upresence_discrete <- cut(u_cat, breaks = 2)
+#Explore relationships
+boxplot(sm_density ~ upresence_discrete, notch = TRUE, outline = FALSE,
+        names = c("No upper marsh", "Upper marsh"), xlab = "Presence of upper saltmarsh",
+        ylab = "Saltmarsh density", main = "Relationship between saltmarsh density and upper saltmarsh presence")
+
+#Concatenate data
+u_fitdata <- data.frame(cbind(u_cat, model_fetchdist, model_tiderange, model_tidecurrent,
+                              model_northing, sm_density))
+colnames(u_fitdata) <- c("u_cat", "fetch", "tiderange", "current", "northing", "marsh_density")
+
+#Run regression on different subsets of the data, both full model and calculating step models
+u_fit <- list()
+u_step <- list()
+for (i in 1:5000) {
+  usample <- sample_n(u_fitdata, 300, replace = FALSE)
+  u_fit[[i]] <- glm(u_cat ~ fetch + tiderange + current + northing + marsh_density, family = binomial,
+                    data = usample)
+  u_step[[i]] <- step(u_fit[[i]], direction = 'both', trace = 0)
+}
+
+#Obtain average model from all fitted models
+u_avgfit <- model.avg(u_fit)
+summary(u_avgfit)
+#u_avgstep <- model.avg(u_step)
+#summary(u_avgstep)
+
+#Get summaries of fitted full models
+u_summary <- lapply(u_fit, summary)
+
+#Extract significant parameter coefficients from all models - spring tide range
+u_coef <- matrix(nrow = 5000, ncol = 1)
+for (i in 1:5000) {
+  u_coef[i] <- coef(u_summary[[i]])[6,1]
+}
+colnames(u_coef) <- c("marsh_density")
+hist(u_coef)
+
+#Plot relationship between predictors and response variables
+scatter.smooth(u_fitdata$marsh_density, u_fitdata$u_cat, pch = 20, xlab = "Saltmarsh density",
+               ylab = "Presence of upper marsh", 
+               main = "Relationship between saltmarsh density and upper marsh presence")
+
+#Fit reduced model - significant parameters only
+u_redfit <- list()
+for (i in 1:5000) {
+  usample <- sample_n(u_fitdata, 300, replace = FALSE)
+  u_redfit[[i]] <- glm(u_cat ~ marsh_density, family = binomial, data = usample)
+}
+
+#Obtain average model from all fitted reduced models
+u_avgredfit <- model.avg(u_redfit)
+summary(u_avgredfit)
+
+#Get summaries of fitted full models
+ured_summary <- lapply(u_redfit, summary)
+
+#Extract significant parameter coefficients from all models - spring tide range
+ured_coef <- matrix(nrow = 5000, ncol = 1)
+for (i in 1:5000) {
+  ured_coef[i] <- coef(ured_summary[[i]])[2,1]
+}
+colnames(ured_coef) <- c("marsh_density")
+hist(ured_coef)
+
+## Final model: marsh density, parameter estimates marsh density = 8.8017 p(0.000728)
+
+## Plots: set variable parameters and hold others constant
+newdata = data.frame(marsh_density = xsmdensity)
+u_pred <- predict(u_avgredfit, newdata, type = 'response')
+write.csv(u_pred, file = "u_predsmdensity.csv")
+plot(xsmdensity, u_pred, pch = 20, xlab = "Saltmarsh density", ylab = "Probability of finding upper marsh",
+     main = "Probability of finding upper marsh at variable saltmarsh density")
+
+#Plot smoothed predictors
+ubigsample <- sample_n(u_fitdata, 5000, replace = FALSE)
+u_fit_gam <- gam(u_cat ~ s(marsh_density, k = 4, fx = TRUE), family = binomial, data = ubigsample)
+summary(u_fit_gam)
+u_fit_gam
+
+plot(u_fit_gam, shade = TRUE, xlab = "Saltmarsh density", ylab = "Smoothed saltmarsh density",
+     main = "Pattern of contribution to \nfitted values by saltmarsh density")
+
+
+####################################################################
+## Regression - extent of saltmarsh (success/failure)
+####################################################################
+
+## Proportion of cells searched that are saltmarsh (includes both land and sea cells).
+## Using a binomial or quasibinomial regression to account for the proportion.
+## Model will depend on wave fetch, tidal range, current, and northings (temp proxy).
+
+## Transform proportion into successes/failures
+sm_success <- sm_density*160
+sm_fail <- 160 - sm_success
+sm_extent_fitdata <- data.frame(cbind(sm_success, sm_fail, model_fetchdist, model_tiderange, 
+                                      model_tidecurrent, model_northing))
+colnames(sm_extent_fitdata) <- c("sm_success", "sm_fail", "fetch", "tiderange", "current", "northing")
+
+## Using binomial family
+#Run regression on different subsets of the data, both full model and calculating step models
+smextent_fit <- list()
+smextent_step <- list()
+for (i in 1:5000) {
+  smextentsample <- sample_n(sm_extent_fitdata, 300, replace = FALSE)
+  smextent_fit[[i]] <- glm(cbind(sm_success, sm_fail) ~ fetch + tiderange + current + northing,
+                           family = binomial, data = smextentsample)
+  smextent_step[[i]] <- step(smextent_fit[[i]], direction = 'both', trace = 0)
+}
+
+smextent_avgfit <- model.avg(smextent_fit)
+summary(smextent_avgfit)
+smextent_avgstep <- model.avg(smextent_step)
+summary(smextent_avgstep)
+
+#Get summaries of fitted full models
+smextent_summary <- lapply(smextent_fit, summary)
+
+#Extract significant parameter coefficients from all models - fetch, tide range, and northing
+smextent_coef <- matrix(nrow = 5000, ncol = 4)
+for (i in 1:5000) {
+  smextent_coef[i,1] <- coef(smextent_summary[[i]])[1,1]
+  smextent_coef[i,2] <- coef(smextent_summary[[i]])[2,1]
+  smextent_coef[i,3] <- coef(smextent_summary[[i]])[3,1]
+  smextent_coef[i,4] <- coef(smextent_summary[[i]])[5,1]
+}
+colnames(smextent_coef) <- c("intercept", "fetch", "tiderange", "northing")
+hist(smextent_coef[,1])
+hist(smextent_coef[,2])
+hist(smextent_coef[,3])
+hist(smextent_coef[,4])
+
+#Plot relationship between predictors and response variables
+scatter.smooth(sm_extent_fitdata$fetch, sm_density, pch = 20, xlab = "Wave fetch (km)",
+               ylab = "Saltmarsh density", 
+               main = "Relationship between wave fetch and saltmarsh density", col = "#CCCCCC")
+scatter.smooth(sm_extent_fitdata$tiderange, sm_density, pch = 20, xlab = "Spring tidal range (m)",
+               ylab = "Saltmarsh density", 
+               main = "Relationship between spring tidal range and saltmarsh density", col = "#CCCCCC")
+scatter.smooth(sm_extent_fitdata$northing, sm_density, pch = 20, xlab = "Northing (m)",
+               ylab = "Saltmarsh density", 
+               main = "Relationship between northing and saltmarsh density", col = "#CCCCCC")
+
+#Fit reduced model - significant parameters only
+smextent_redfit <- list()
+for (i in 1:5000) {
+  smextentsample <- sample_n(sm_extent_fitdata, 300, replace = FALSE)
+  smextent_redfit[[i]] <- glm(cbind(sm_success, sm_fail) ~ fetch + tiderange + northing, 
+                              family = binomial, data = smextentsample)
+}
+
+#Obtain average model from all fitted reduced models
+smextent_avgredfit <- model.avg(smextent_redfit)
+summary(smextent_avgredfit)
+
+#Get summaries of fitted full models
+smextentred_summary <- lapply(smextent_redfit, summary)
+
+#Extract significant parameter coefficients from all models - fetch, tide range, and northing
+smextentred_coef <- matrix(nrow = 5000, ncol = 3)
+for (i in 1:5000) {
+  smextentred_coef[i,1] <- coef(smextentred_summary[[i]])[2,1]
+  smextentred_coef[i,2] <- coef(smextentred_summary[[i]])[3,1]
+  smextentred_coef[i,3] <- coef(smextentred_summary[[i]])[4,1]
+}
+colnames(smextentred_coef) <- c("fetch", "tiderange", "northing")
+hist(smextentred_coef[,1])
+hist(smextentred_coef[,2])
+hist(smextentred_coef[,3])
+
+## Final model: fetch + tiderange + northing (and intercept), parameter estimates fetch = -0.0485 p(<2e-16),
+## tiderange = 0.0905 p(<2e-16), northing = 0.000004549 p(<2e-16), intercept = -4.485 p(<2e-16)
+
+#Plot smoothed variables
+smextentbigsample <- sample_n(sm_extent_fitdata, 5000, replace = FALSE)
+smextent_fit_gam <- gam(cbind(sm_success, sm_fail) ~ s(fetch, k = 4, fx = TRUE) + 
+                          s(tiderange, k = 4, fx = TRUE) + s(northing, k = 4, fx = TRUE), 
+                        family = binomial, 
+                        data = smextentbigsample)
+summary(smextent_fit_gam)
+
+plot(smextent_fit_gam, shade = TRUE, xlab = "Wave fetch (km)", ylab = "Smoothed wave fetch",
+     main = "Pattern of contribution to \nfitted values by wave fetch")
+
+plot(smextent_fit_gam, shade = TRUE, xlab = "Spring tidal range (m)", ylab = "Smoothed spring tidal range",
+     main = "Pattern of contribution to \nfitted values by spring tidal range")
+
+plot(smextent_fit_gam, shade = TRUE, xlab = "Northing (m)", ylab = "Smoothed northing",
+     main = "Pattern of contribution to \nfitted values by northing")
+
+
+####################################################################
+## Regression - extent of mudflat (success/failure)
+####################################################################
+
+## Number of cells searched that are mudflat (success) (includes both land and sea cells) versus
+## number of cells searched that are not mudflat (failure)
+## Using a binomial or quasibinomial regression to account for the proportion.
+## Model will depend on wave fetch, tidal range, current, and northings (temp proxy).
+
+## Transform proportion into successes/failures instead
+mf_success <- mf_density*160
+mf_fail <- 160 - mf_success
+mf_extent_fitdata <- data.frame(cbind(mf_success, mf_fail, model_fetchdist, model_tiderange, 
+                                      model_tidecurrent, model_northing))
+colnames(mf_extent_fitdata) <- c("mf_success", "mf_fail", "fetch", "tiderange", "current", "northing")
+
+## Using binomial family
+#Run regression on different subsets of the data, both full model and calculating step models
+mfextent_fit <- list()
+mfextent_step <- list()
+for (i in 1:5000) {
+  mfextentsample <- sample_n(mf_extent_fitdata, 300, replace = FALSE)
+  mfextent_fit[[i]] <- glm(cbind(mf_success, mf_fail) ~ fetch + tiderange + current + northing,
+                           family = binomial, data = mfextentsample)
+  mfextent_step[[i]] <- step(mfextent_fit[[i]], direction = 'both', trace = 0)
+}
+
+#Obtain average model from all fitted models
+mfextent_avgfit <- model.avg(mfextent_fit)
+summary(mfextent_avgfit)
+mfextent_avgstep <- model.avg(mfextent_step)
+summary(mfextent_avgstep)
+
+#Get summaries of fitted full models
+mfextent_summary <- lapply(mfextent_fit, summary)
+
+#Extract significant parameter coefficients from all models - fetch, tide range, current and northing
+mfextent_coef <- matrix(nrow = 5000, ncol = 4)
+for (i in 1:5000) {
+  mfextent_coef[i,1] <- coef(mfextent_summary[[i]])[2,1]
+  mfextent_coef[i,2] <- coef(mfextent_summary[[i]])[3,1]
+  mfextent_coef[i,3] <- coef(mfextent_summary[[i]])[4,1]
+  mfextent_coef[i,4] <- coef(mfextent_summary[[i]])[5,1]
+}
+colnames(mfextent_coef) <- c("fetch", "tiderange", "current", "northing")
+hist(mfextent_coef[,1])
+hist(mfextent_coef[,2])
+hist(mfextent_coef[,3])
+hist(mfextent_coef[,4])
+
+#Plot relationship between predictors and response variables
+scatter.smooth(mf_extent_fitdata$fetch, mf_density, pch = 20, xlab = "Wave fetch (km)",
+               ylab = "Mudflat density", 
+               main = "Relationship between wave fetch and mudflat density", col = "#CCCCCC")
+scatter.smooth(mf_extent_fitdata$tiderange, mf_density, pch = 20, xlab = "Spring tidal range (m)",
+               ylab = "Mudflat density", 
+               main = "Relationship between spring tidal range and mudflat density", col = "#CCCCCC")
+scatter.smooth(mf_extent_fitdata$current, mf_density, pch = 20, xlab = "Spring peak current speed (m/s)",
+               ylab = "Mudflat density", 
+               main = "Relationship between spring peak current speed and mudflat density", col = "#CCCCCC")
+scatter.smooth(mf_extent_fitdata$northing, mf_density, pch = 20, xlab = "Northing (m)",
+               ylab = "Mudflat density", 
+               main = "Relationship between northing and mudflat density", col = "#CCCCCC")
+
+#Fit reduced model - significant parameters only
+mfextent_redfit <- list()
+for (i in 1:5000) {
+  mfextentsample <- sample_n(mf_extent_fitdata, 300, replace = FALSE)
+  mfextent_redfit[[i]] <- glm(cbind(mf_success, mf_fail) ~ fetch + tiderange + current + northing,
+                              family = binomial, data = mfextentsample)
+}
+
+#Obtain average model from all fitted reduced models
+mfextent_avgredfit <- model.avg(mfextent_redfit)
+summary(mfextent_avgredfit)
+
+#Get summaries of fitted full models
+mfextentred_summary <- lapply(mfextent_redfit, summary)
+
+#Extract significant parameter coefficients from all models - fetch, tide range, current and northing
+mfextentred_coef <- matrix(nrow = 5000, ncol = 4)
+for (i in 1:5000) {
+  mfextentred_coef[i,1] <- coef(mfextentred_summary[[i]])[2,1]
+  mfextentred_coef[i,2] <- coef(mfextentred_summary[[i]])[3,1]
+  mfextentred_coef[i,3] <- coef(mfextentred_summary[[i]])[4,1]
+  mfextentred_coef[i,4] <- coef(mfextentred_summary[[i]])[5,1]
+}
+colnames(mfextentred_coef) <- c("fetch", "tiderange", "current", "northing")
+hist(mfextentred_coef[,1])
+hist(mfextentred_coef[,2])
+hist(mfextentred_coef[,3])
+hist(mfextentred_coef[,4])
+
+## Final model: fetch + tiderange + current + northing, parameter estimates fetch = -0.03704 p(<2e-16),
+## tiderange = -0.09111 p(9.57e-12), current = -0.6712 p(9.06e-11), northing = -0.00000236 p(<2e-16),
+## intercept = -1.941 p(<2e-16)
+
+#Plot smoothed predictors
+mfextentbigsample <- sample_n(mf_extent_fitdata, 5000, replace = FALSE)
+mfextent_fit_gam <- gam(cbind(mf_success, mf_fail) ~ s(fetch, k = 3, fx = TRUE) + 
+                          s(tiderange, k = 3, fx = TRUE) + s(current, k = 3, fx = TRUE) + 
+                          s(northing, k = 3, fx = TRUE), 
+                        family = binomial, data = mfextentbigsample)
+summary(mfextent_fit_gam)
+
+plot(mfextent_fit_gam, shade = TRUE, xlab = "Wave fetch (km)", ylab = "Smoothed wave fetch",
+     main = "Pattern of contribution to \nfitted values by wave fetch")
+
+plot(mfextent_fit_gam, shade = TRUE, xlab = "Spring tidal range (m)", ylab = "Smoothed spring tidal range",
+     main = "Pattern of contribution to \nfitted values by spring tidal range")
+
+plot(mfextent_fit_gam, shade = TRUE, xlab = "Spring peak current speed (m/s)", ylab = "Smoothed spring peak current speed",
+     main = "Pattern of contribution to \nfitted values by spring peak current speed")
+
+plot(mfextent_fit_gam, shade = TRUE, xlab = "Northing (m)", ylab = "Smoothed northing",
+     main = "Pattern of contribution to \nfitted values by northing")
+
+
+####################################################################
+## Regression - number of saltmarsh zonation types
+####################################################################
+
+## Average number of zonations against total number of zonations (6). 
+## Using a binomial or quasibinomial regression to account for the proportion.
+## Model will depend on wave fetch, tidal range, current, northings (temp proxy).
+
+## Bind data together
+zone_fail <- 6 - zone_avgsum
+zone_proportion <- zone_avgsum/6
+zone_fitdata <- data.frame(cbind(zone_avgsum, zone_fail, model_fetchdist, 
+                                 model_tiderange, model_tidecurrent, model_northing, zone_proportion))
+colnames(zone_fitdata) <- c("zone_success", "zone_fail", "fetch", "tiderange", "current", "northing",
+                            "zone_proportion")
+
+## Using binomial family
+#Run regression on different subsets of the data, both full model and calculating step models
+zone_fit <- list()
+zone_step <- list()
+for (i in 1:5000) {
+  zonesample <- sample_n(zone_fitdata, 300, replace = FALSE)
+  zone_fit[[i]] <- glm(cbind(zone_success, zone_fail) ~ fetch + tiderange + current + northing,
+                       family = binomial, data = zonesample)
+  zone_step[[i]] <- step(zone_fit[[i]], direction = 'both', trace = 0)
+}
+
+#Obtain average model from all fitted models
+zone_avgfit <- model.avg(zone_fit)
+summary(zone_avgfit)
+zone_avgstep <- model.avg(zone_step)
+summary(zone_avgstep)
+
+#Get summaries of fitted full models
+zone_summary <- lapply(zone_fit, summary)
+
+#Extract significant parameter coefficients from all models
+zone_coef <- matrix(nrow = 5000, ncol = 3)
+for (i in 1:5000) {
+  zone_coef[i,1] <- coef(zone_summary[[i]])[1,1]
+  zone_coef[i,2] <- coef(zone_summary[[i]])[2,1]
+  zone_coef[i,3] <- coef(zone_summary[[i]])[5,1]
+}
+colnames(zone_coef) <- c("intercept", "fetch", "northing")
+hist(zone_coef[,1])
+hist(zone_coef[,2])
+hist(zone_coef[,3])
+
+#Plot relationship between predictors and response variables
+scatter.smooth(zone_fitdata$fetch, zone_avgsum, pch = 20, xlab = "Wave fetch (km)",
+               ylab = "Average number of saltmarsh zones", col = "#CCCCCC",
+               main = "Relationship between wave fetch and \naverage number of saltmarsh zones")
+scatter.smooth(zone_fitdata$northing, zone_avgsum, pch = 20, xlab = "Northing (km)",
+               ylab = "Average number of saltmarsh zones", col = "#CCCCCC",
+               main = "Relationship between northing and \naverage number of saltmarsh zones")
+
+#Fit reduced model - significant parameters only
+zone_redfit <- list()
+for (i in 1:5000) {
+  zonesample <- sample_n(zone_fitdata, 300, replace = FALSE)
+  zone_redfit[[i]] <- glm(cbind(zone_success, zone_fail) ~ fetch + northing, 
+                          family = binomial, data = zonesample)
+}
+
+#Obtain average model from all fitted reduced models
+zone_avgredfit <- model.avg(zone_redfit)
+summary(zone_avgredfit)
+
+#Get summaries of fitted full models
+zonered_summary <- lapply(zone_redfit, summary)
+
+#Extract significant parameter coefficients from all models
+zonered_coef <- matrix(nrow = 5000, ncol = 2)
+for (i in 1:5000) {
+  zonered_coef[i,1] <- coef(zonered_summary[[i]])[2,1]
+  zonered_coef[i,2] <- coef(zonered_summary[[i]])[3,1]
+}
+colnames(zonered_coef) <- c("fetch", "northing")
+hist(zonered_coef[,1])
+hist(zonered_coef[,2])
+
+## Final model: fetch  + northing, parameter estimates fetch = -0.01995 p(0.00939),
+## northing = 0.000001565 p(0.00133), intercept = -2.416 p(<2e-16)
+
+#Plot smoothed predictors
+zonebigsample <- sample_n(zone_fitdata, 5000, replace = FALSE)
+zone_fit_gam <- gam(zone_proportion ~ s(fetch, k = 4, fx = TRUE) + s(northing, k = 4, fx = TRUE), 
+                    family = quasibinomial, data = zonebigsample)
+summary(zone_fit_gam)
+
+plot(zone_fit_gam, shade = TRUE, xlab = "Wave fetch (km)", ylab = "Smoothed wave fetch",
+     main = "Pattern of contribution to \nfitted values by wave fetch")
+
+plot(zone_fit_gam, shade = TRUE, xlab = "Northing (m)", ylab = "Smoothed northing",
+     main = "Pattern of contribution to \nfitted values by northing")
+
+
+#############################################################################################
+#############################################################################################
+
+# -------------------------------------PROTECTION INDEX------------------------------------ #
+
+#############################################################################################
+#############################################################################################
+
+## Protection index = wave fetch * attenuation by saltmarsh * building factor * farmland factor
+## Attenuation by saltmarsh: 88.76*(wave fetch)/(15.98 + (wave fetch))
+## Buildings: by density. Density within range x = building factor
+## (0.0, 0.1] = 0.5; (0.1, 0.2] = 0.4; (0.2, 0.3] = 0.3; (0.3, 0.4] = 0.2; (0.4, 0.5] = 0.1
+## Agricultural land: by grade (i.e. quality of farmland), grade 1 is highest quality, grade 5 lowest
+## Grade 5 = 0.5; Grade 4 = 0.4; Grade 3 = 0.3; Grade 2 = 0.2; Grade 1 = 0.1
+## Goes by decreasing order - i.e. most important pieces will have lowest protection index (as 
+## attenuation by saltmarsh decreases wave fetch and therefore buildings and agricultural land should
+## also decrease the protection index for consistency)
+
+#Replace NAs with zeroes.
+g1 <- matrix(g1_presence[,1])
+for (i in 1:length(g1)) {
+  if (is.na(g1[i]) == FALSE) {
+    g1[i] <- 1
+  } else {
+    g1[i] <- 0
+  }
+}
+
+g2 <- matrix(g2_presence[,1])
+for (i in 1:length(g2)) {
+  if (is.na(g2[i]) == FALSE) {
+    g2[i] <- 2
+  } else {
+    g2[i] <- 0
+  }
+}
+
+g3 <- matrix(g3_presence[,1])
+for (i in 1:length(g3)) {
+  if (is.na(g3[i]) == FALSE) {
+    g3[i] <- 3
+  } else {
+    g3[i] <- 0
+  }
+}
+
+g4 <- matrix(g4_presence[,1])
+for (i in 1:length(g4)) {
+  if (is.na(g4[i]) == FALSE) {
+    g4[i] <- 4
+  } else {
+    g4[i] <- 0
+  }
+}
+
+g5 <- matrix(g5_presence[,1])
+for (i in 1:length(g5)) {
+  if (is.na(g5[i]) == FALSE) {
+    g5[i] <- 5
+  } else {
+    g5[i] <- 0
+  }
+}
+
+## Set up protection index
+sm_attenuation <- 88.76*sm_dist/(15.98 + sm_dist)
+wavereduc <- sm_attenuation*fetch_dist/100
+effective_fetch <- fetch_dist - wavereduc
+
+## Bind coordinates to set up heat map
+waveprotect <- data.frame(data_coords, wavereduc)
+colnames(waveprotect) = c("Easting", "Northing", "Wave_Reduction")
+
+## Assign 'importance' value to land grades
+aglandfactor <- matrix(nrow = length(fetch_dist))
+for (i in 1:length(aglandfactor)) {
+  if (g1[i] == 1) {
+    aglandfactor[i] <- 1
+  } else if (g2[i] == 2) {
+    aglandfactor[i] <- 0.5
+  } else if (g3[i] == 3) {
+    aglandfactor[i] <- 0.15
+  } else if (g4[i] == 4) {
+    aglandfactor[i] <- 0.05
+  } else if (g5[i] == 5) {
+    aglandfactor[i] <- 0.01
+  } else {
+    aglandfactor[i] <- 0.0001
+  }
+}
+
+## Assign 'importance' factor to building density categories
+buildfactor <- b_density
+for (i in 1:length(buildfactor)) {
+  if (b_density[i] > 0 & b_density[i] <= 0.1) {
+    buildfactor[i] <- 0.01
+  } else if (b_density[i] > 0.1 & b_density[i] <= 0.2) {
+    buildfactor[i] <- 0.05
+  } else if (b_density[i] > 0.2 & b_density[i] <= 0.3) {
+    buildfactor[i] <- 0.15
+  } else if (b_density[i] > 0.3 & b_density[i] <= 0.4) {
+    buildfactor[i] <- 0.5
+  } else if (b_density[i] > 0.4 & b_density[i] <= 0.5) {
+    buildfactor[i] <- 1
+  } else {
+    buildfactor[i] <- 0.0001
+  }
+}
+
+#Calculate protection index
+#Buildings:
+protect_buildings <- wavereduc*buildfactor
+protect_buildings <- data.frame(data_coords, protect_buildings)
+#Agricultural land:
+protect_farmland <- wavereduc*aglandfactor
+protect_farmland <- data.frame(data_coords, protect_farmland)
+#Merged:
+protect_metric <- matrix(nrow = length(buildfactor))
+for (i in 1:length(buildfactor)) {
+  protect_metric[i] <- wavereduc[i]*max(buildfactor[i], aglandfactor[i])
+}
+protect_metric <- data.frame(data_coords, protect_metric)
+colnames(protect_buildings) = colnames(protect_farmland) = 
+  colnames(protect_metric) <- c("Easting", "Northing", "Protection")
+
+#Subset buildings
+protect_b1 <- protect_buildings[protect_buildings$Protection <= 0.00001, ]
+protect_b2 <- protect_buildings[protect_buildings$Protection > 0.00001 & protect_buildings$Protection <= 0.005, ]
+protect_b3 <- protect_buildings[protect_buildings$Protection > 0.005, ]
+protect_b1 <- sample_n(protect_b1, size = nrow(protect_b1)/6, replace = FALSE)
+protect_b2 <- sample_n(protect_b2, size = nrow(protect_b2)/4, replace = FALSE)
+protect_b3 <- sample_n(protect_b3, size = nrow(protect_b3)/4, replace = FALSE)
+protect_buildingsmall <- rbind(protect_b1, protect_b2, protect_b3)
+
+#Subset farmland
+protect_f1 <- protect_farmland[protect_farmland$Protection <= 0.00001, ]
+protect_f2 <- protect_farmland[protect_farmland$Protection > 0.00001 & protect_farmland$Protection <= 0.1, ]
+protect_f3 <- protect_farmland[protect_farmland$Protection > 0.1, ]
+protect_f1 <- sample_n(protect_f1, size = nrow(protect_f1)/6, replace = FALSE)
+protect_f2 <- sample_n(protect_f2, size = nrow(protect_f2)/4, replace = FALSE)
+protect_f3 <- sample_n(protect_f3, size = nrow(protect_f3)/4, replace = FALSE)
+protect_farmlandsmall <- rbind(protect_f1, protect_f2, protect_f3)
+
+#Subset total metric
+protect_1 <- protect_metric[protect_metric$Protection <= 0.00001, ]
+protect_2 <- protect_metric[protect_metric$Protection > 0.00001 & protect_metric$Protection <= 0.5, ]
+protect_3 <- protect_metric[protect_metric$Protection > 0.5, ]
+protect_1 <- sample_n(protect_1, size = nrow(protect_1)/6, replace = FALSE)
+protect_2 <- sample_n(protect_2, size = nrow(protect_2)/4, replace = FALSE)
+protect_3 <- sample_n(protect_3, size = nrow(protect_3)/4, replace = FALSE)
+protect_small <- rbind(protect_1, protect_2, protect_3)
+protect_max <- protect_metric[protect_metric$Protection > 20, ]
+
+## UK coast - cropped
+UKcoast = ggplot(UK_poly) + scale_y_continuous(limits = c(0, 750000)) +
+  geom_path(aes(long, lat, group = group), alpha = 0.7, size = 0.5, colour = "gray78")
+## UK coast - Essex
+UKcoast = ggplot(UK_poly) + scale_x_continuous(limits = c(500000, 620000)) +
+  scale_y_continuous(limits = c(150000, 230000)) +
+  geom_path(aes(long, lat, group = group), alpha = 0.7, size = 0.5, colour = "gray78")
+## UK coast - Morecambe Bay
+UKcoast = ggplot(UK_poly) + scale_x_continuous(limits = c(280000, 365000)) +
+  scale_y_continuous(limits = c(412000, 500000)) + 
+  geom_path(aes(long, lat, group = group), alpha = 0.7, size = 0.5, colour = "gray78")
+
+## Heat map of protection index
+protect_heat = UKcoast + geom_point(data = protect_small, shape = 20,
+                                    aes(Easting, Northing, Protection, colour = Protection)) +
+  scale_colour_gradientn(colours = rev(brewer.pal(11, "Spectral"))) +
+  coord_equal() + labs(x = "Easting (m)", y = "Northing (m)", colour = "Protection \nIndex") +
+  guides(alpha = FALSE) + ggtitle("Protection index near Morecambe Bay")
+protect_heat
+dev.copy2pdf(file = "/Users/reidgilbertson/Desktop/protectmergeMorecambe.pdf")
+dev.off
+
+
+#####################################################################
+## Overlay buildings, farmland, marsh and coast on protection index
+#####################################################################
+#Crop saltmarsh and building files to regional extents, then fortify
+## Essex
+UK_localessex <- ggplot(UK_poly) + scale_x_continuous(limits = c(617500, 627900)) +
+  scale_y_continuous(limits = c(220900, 230300)) +
+  geom_path(aes(long, lat, group = group), alpha = 0.7, size = 0.5, colour = "gray78")
+#Crop SM and building shapefiles to proper extent
+SM_essexout <- crop(UK_sm, extent(617500, 627900, 220900, 230300))
+SM_essexout <- fortify(SM_essexout)
+build_essexout <- crop(build_essex, extent(617500, 627900, 220900, 230300))
+build_essexout <- fortify(build_essexout)
+
+## Morecambe
+UK_localmorecambe <- ggplot(UK_poly) + scale_x_continuous(limits = c(320000, 362000)) +
+  scale_y_continuous(limits = c(410000, 438000)) +
+  geom_path(aes(long, lat, group = group), alpha = 0.7, size = 0.5, colour = "gray78")
+#Crop SM and buildings
+SM_morecambeout <- crop(UK_sm, extent(320000, 362000, 410000, 438000))
+SM_morecambeout <- fortify(SM_morecambeout)
+build_morecambeout <- crop(build_morecambe, extent(320000, 362000, 410000, 438000))
+build_morecambeout <- fortify(build_morecambeout)
+
+UK_highprotect <- ggplot(UK_poly) + scale_x_continuous(limits = c(412700, 420300)) +
+  scale_y_continuous(limits = c(88800, 94100)) +
+  geom_path(aes(long, lat, group = group), alpha = 0.7, size = 0.5, colour = "gray78")
+
+## Heat map for Essex
+protect_essex = UK_localessex + 
+  geom_path(data = SM_essexout, aes(long, lat, group = group, colour = "1"), 
+            alpha = 0.3, size = 0.5) +
+  geom_path(data = build_essexout, aes(long, lat, group = group, colour = '2'), alpha = 0.6, size = 0.5) +
+  geom_path(data = grade1, aes(long, lat, group = group, colour = '3'), alpha = 0.6, size = 0.5) +
+  geom_path(data = grade2, aes(long, lat, group = group, colour = '4'), alpha = 0.6, size = 0.5) +
+  geom_path(data = grade3, aes(long, lat, group = group, colour = '5'), alpha = 0.6, size = 0.5) +
+  geom_path(data = grade4, aes(long, lat, group = group, colour = '6'), alpha = 0.6, size = 0.5) +
+  geom_path(data = grade5, aes(long, lat, group = group, colour = '7'), alpha = 0.6, size = 0.5) +
+  scale_colour_manual(name = "Land \nFeatures", 
+                      values = c('1' = 'burlywood', '2' = 'saddlebrown', '3' = 'skyblue4', 
+                                 '4' = 'skyblue3', '5' = 'skyblue2', '6' = 'skyblue1', 
+                                 '7' = 'skyblue'), 
+                      labels = c('Saltmarsh', 'Buildings', 'Grade 1 Land', 'Grade 2 Land', 
+                                 'Grade 3 Land', 'Grade 4 Land', 'Grade 5 Land')) +
+  theme_bw()
+
+protect_essex <- protect_essex + 
+  geom_point(data = protect_small, shape = 21, aes(Easting, Northing, Protection, fill = Protection)) +
+  scale_fill_gradientn(colours = rev(brewer.pal(11, "Spectral"))) +
+  coord_equal() + labs(x = "Easting (m)", y = "Northing (m)", fill = "Protection \nIndex") +
+  guides(alpha = FALSE) + ggtitle("Protection index \nat an Essex marsh")
+protect_essex
+dev.copy2pdf(file = "/Users/reidgilbertson/Desktop/protectEssexlocal.pdf")
+dev.off
+
+
+## Heat map for Morecambe
+protect_morecambe = UK_localmorecambe + 
+  geom_path(data = SM_morecambeout, aes(long, lat, group = group, colour = '1'), 
+            alpha = 0.3, size = 0.5) +
+  geom_path(data = build_morecambeout, aes(long, lat, group = group, colour = '2'), alpha = 0.6, size = 0.5) +
+  geom_path(data = grade1, aes(long, lat, group = group, colour = '3'), alpha = 0.6, size = 0.5) +
+  geom_path(data = grade2, aes(long, lat, group = group, colour = '4'), alpha = 0.6, size = 0.5) +
+  geom_path(data = grade3, aes(long, lat, group = group, colour = '5'), alpha = 0.6, size = 0.5) +
+  geom_path(data = grade4, aes(long, lat, group = group, colour = '6'), alpha = 0.6, size = 0.5) +
+  geom_path(data = grade5, aes(long, lat, group = group, colour = '7'), alpha = 0.6, size = 0.5) +
+  theme_bw() +
+  scale_colour_manual(name = "Land \nFeatures",
+                      values = c('1' = 'burlywood', '2' = 'saddlebrown', '3' = 'skyblue4',
+                                 '4' = 'skyblue3', '5' = 'skyblue2', '6' = 'skyblue1',
+                                 '7' = 'skyblue'),
+                      labels = c('Saltmarsh', 'Buildings', 'Grade 1 Land', 'Grade 2 Land',
+                                 'Grade 3 Land', 'Grade 4 Land', 'Grade 5 Land')) +
+  geom_point(data = protect_small, shape = 21, aes(Easting, Northing, Protection, fill = Protection)) +
+  scale_fill_gradientn(colours = rev(brewer.pal(11, "Spectral"))) +
+  coord_equal() + labs(x = "Easting (m)", y = "Northing (m)", fill = "Protection \nIndex") +
+  guides(alpha = FALSE) + ggtitle("Protection index \nat a Morecambe Bay marsh")
+protect_morecambe
+dev.copy2pdf(file = "/Users/reidgilbertson/Desktop/protectmergeMorecambelocal.pdf")
+dev.off
+
+
+########################################
+# Maps for areas of extremely high importance
+########################################
+
+## Local areas of high protection
+build_northumberland <- readOGR("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/UK buildings/buildingNorthumberland.shp")
+build_saltfleet <- readOGR("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/UK buildings/buildingSaltfleet.shp")
+build_wells <- readOGR("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/UK buildings/buildingWellsnexttheSea.shp")
+build_southwold <- readOGR("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/UK buildings/buildingSouthwold.shp")
+build_brighton <- readOGR("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/UK buildings/buildingBrighton.shp")
+build_boston <- readOGR("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/UK buildings/buildingsBoston.shp")
+build_selsey <- readOGR("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/UK buildings/buildingsSelsey.shp")
+build_exmouth <- readOGR("/Users/reidgilbertson/Desktop/Research/Data and analysis/NoraSpatialData/UK buildings/buildingsExmouth.shp")
+#Crop saltmarsh
+SM_northumberland <- crop(UK_sm, extent(401300, 433700, 579400, 649400))
+SM_northumberland <- fortify(SM_northumberland)
+SM_saltfleet <- crop(UK_sm, extent(493500, 574800, 375800, 438000))
+SM_saltfleet <- fortify(SM_saltfleet)
+SM_wells <- crop(UK_sm, extent(568100, 614000, 329200, 362400))
+SM_wells <- fortify(SM_wells)
+SM_southwold <- crop(UK_sm, extent(632900, 662000, 241700, 279300))
+SM_southwold <- fortify(SM_southwold)
+SM_brighton <- crop(UK_sm, extent(519100, 524800, 103100, 108000))
+SM_brighton <- fortify(SM_brighton)
+SM_boston <- crop(UK_sm, extent(512300, 618000, 283500, 382600))
+SM_boston <- fortify(SM_boston)
+SM_selsey <- crop(UK_sm, extent(482400, 497000, 88600, 100600))
+SM_selsey <- fortify(SM_selsey)
+SM_exmouth <- crop(UK_sm, extent(291800, 313700, 74900, 93280))
+SM_exmouth <- fortify(SM_exmouth)
+#Crop buildings
+build_northumberland <- crop(build_northumberland, extent(401300, 433700, 579400, 649400))
+build_northumberland <- fortify(build_northumberland)
+build_saltfleet <- crop(build_saltfleet, extent(493500, 574800, 375800, 438000))
+build_saltfleet <- fortify(build_saltfleet)
+build_wells <- crop(build_wells, extent(568100, 614000, 329200, 362400))
+build_wells <- fortify(build_wells)
+build_southwold <- crop(build_southwold, extent(632900, 662000, 241700, 279300))
+build_southwold <- fortify(build_southwold)
+build_brighton <- crop(build_brighton, extent(519100, 524800, 103100, 108000))
+build_brighton <- fortify(build_brighton)
+build_boston <- crop(build_boston, extent(523000, 579800, 316800, 369000))
+build_boston <- fortify(build_boston)
+build_selsey <- crop(build_selsey, extent(482400, 497000, 88600, 100600))
+build_selsey <- fortify(build_selsey)
+build_exmouth <- crop(build_exmouth, extent(291800, 313700, 74900, 93280))
+build_exmouth <- fortify(build_exmouth)
+
+#Coastal map
+UK_highprotect <- ggplot(UK_poly) + scale_x_continuous(limits = c(523000, 579800)) +
+  scale_y_continuous(limits = c(316800, 369000)) +
+  geom_path(aes(long, lat, group = group), alpha = 0.7, size = 0.5, colour = "gray78")
+
+## Heat map for areas of high protection
+protect_max = UK_highprotect + 
+  geom_path(data = SM_boston, aes(long, lat, group = group, colour = '1'), 
+            alpha = 0.3, size = 0.5) +
+  geom_path(data = build_boston, aes(long, lat, group = group, colour = '2'), alpha = 0.6, size = 0.5) +
+  geom_path(data = grade1, aes(long, lat, group = group, colour = '3'), alpha = 0.6, size = 0.5) +
+  geom_path(data = grade2, aes(long, lat, group = group, colour = '4'), alpha = 0.6, size = 0.5) +
+  geom_path(data = grade3, aes(long, lat, group = group, colour = '5'), alpha = 0.6, size = 0.5) +
+  geom_path(data = grade4, aes(long, lat, group = group, colour = '6'), alpha = 0.6, size = 0.5) +
+  geom_path(data = grade5, aes(long, lat, group = group, colour = '7'), alpha = 0.6, size = 0.5) +
+  theme_bw() +
+  scale_colour_manual(name = "Land \nFeatures",
+                      values = c('1' = 'burlywood', '2' = 'saddlebrown', '3' = 'skyblue4',
+                                 '4' = 'skyblue3', '5' = 'skyblue2', '6' = 'skyblue1',
+                                 '7' = 'skyblue'),
+                      labels = c('Saltmarsh', 'Buildings', 'Grade 1 Land', 'Grade 2 Land',
+                                 'Grade 3 Land', 'Grade 4 Land', 'Grade 5 Land')) +
+  geom_point(data = protect_small, shape = 21, aes(Easting, Northing, Protection, fill = Protection)) +
+  scale_fill_gradientn(colours = rev(brewer.pal(11, "Spectral"))) +
+  coord_equal() + labs(x = "Easting (m)", y = "Northing (m)", fill = "Protection \nIndex") +
+  guides(alpha = FALSE) + ggtitle("Protection index near \nBoston")
+protect_max
+dev.copy2pdf(file = "/Users/reidgilbertson/Desktop/protectlocal_Boston.pdf")
+dev.off
+
+
+#############################################################################################
+#############################################################################################
+#############################################################################################
+#############################################################################################
