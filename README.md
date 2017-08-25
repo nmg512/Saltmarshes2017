@@ -1,4 +1,4 @@
-# Saltmarshes2017
+# Saltmarshes 2017
 Code used in manipulation and analysis of spatial data for UK saltmarshes.
 
 Data files are not included; this code is intended to provide an overview of the methods used in the research.
